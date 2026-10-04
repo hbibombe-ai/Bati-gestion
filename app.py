@@ -96,9 +96,15 @@ if utilisateur.get("doit_changer_mdp"):
 ui.appliquer_style()
 
 # ------------------------------------------------------------------ navigation
-from vues import (accueil, audit, caisse, chantiers, compte, comptes_tiers, depenses, devis_factures,  # noqa: E402
-                  dossiers, justificatifs, paie, personnel, rapports, recherche, reprise, sauvegarde, societe,
-                  tiers, utilisateurs)
+try:
+    from vues import (accueil, audit, caisse, chantiers, compte, comptes_tiers, depenses,  # noqa: E402
+                      devis_factures, dossiers, justificatifs, paie, personnel, rapports, recherche,
+                      reprise_historique, sauvegarde, societe, tiers, utilisateurs)
+except ModuleNotFoundError as e:
+    st.error(f"Fichier introuvable : {e.name}. Le dossier « vues » (20 fichiers) doit être déposé sur GitHub, à côté "
+             "de app.py, avec les dossiers « static » et « .streamlit ». Ajoutez-le puis redémarrez l’application.")
+    st.stop()
+reprise = reprise_historique
 
 
 def espace(cle: str):
