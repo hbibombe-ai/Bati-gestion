@@ -7,7 +7,7 @@ import auth
 import nav
 import regles as R
 import ui
-from vues import chantiers as vch
+import chantiers as vch
 
 
 def page() -> None:

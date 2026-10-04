@@ -7,7 +7,7 @@ import auth
 import db
 import regles as R
 import ui
-from vues import devis_factures
+import devis_factures
 
 
 def _filtres() -> dict:
