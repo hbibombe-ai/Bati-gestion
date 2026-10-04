@@ -17,6 +17,81 @@ def module_de(type_: str) -> str:
     return R.DOSSIER_MODULE[R.ERP_DOSSIERS[type_]["group"]]
 
 
+# Où créer l'élément attendu par une liste de liens
+_PAGE_ESPACE = {cle: titre for cle, (titre, _) in R.V7_SPACES.items()}
+_MENU = {"commercial": "Prospects et contrats", "achats": "Achats", "stocks": "Stocks", "charroi": "Matériel et charroi",
+         "projets": "DQE, situations, qualité", "rh": "Congés, missions, avances",
+         "comptabilite": "Comptabilité et fiscalité", "administration": "Registres, garanties, tâches"}
+
+
+def _ou_creer(cible: str) -> str:
+    if cible == "personnel":
+        return "ajoutez d’abord la personne dans « Personnel et pointage »."
+    for cle, (_, types) in R.V7_SPACES.items():
+        if cible in types:
+            return (f"enregistrez d’abord au moins un dossier « {R.ERP_DOSSIERS[cible]['label']} » "
+                    f"(menu « {_MENU[cle]} »), puis revenez ici.")
+    return "enregistrez d’abord l’élément correspondant."
+
+
+NOUVEAU = "__nouveau__"
+
+
+def _creable(cible: str) -> bool:
+    """Un référentiel sans liens obligatoires peut être créé directement depuis la liste qui le cite."""
+    return cible in R.ERP_DOSSIERS and not any(R.field_spec(f)[2] == "link" for f in R.ERP_DOSSIERS[cible]["fields"])
+
+
+def _convertir(fields, valeurs: dict) -> None:
+    for f in fields:
+        cle, label, kind, _, _ = R.field_spec(f)
+        if valeurs.get(cle) is None:
+            continue
+        if kind == "money":
+            valeurs[cle] = R.cents(valeurs[cle], label)
+        elif kind == "quantity":
+            valeurs[cle] = float(valeurs[cle])
+
+
+def _champs(fields, vals: dict, k: str, cur: str, s: dict, prefixe: str, nouveau: bool):
+    """Affiche les champs d'un type de dossier ; renvoie (valeurs, éléments à créer à la volée)."""
+    valeurs, creations = {}, []
+    cols = st.columns(2)
+    for n, f in enumerate(fields):
+        cle, label, kind, requis, options = R.field_spec(f)
+        lbl = label + (" *" if requis else "")
+        v = vals.get(cle)
+        key = f"{prefixe}_{cle}_{k}"
+        with cols[n % 2]:
+            if kind == "select":
+                valeurs[cle] = ui.choix(lbl, {o: o for o in options}, key, v or "", vide="Choisir") or None
+            elif kind == "link":
+                liens = {d["id"]: R.link_label(d) for d in R.dossier_links(s, options)}
+                if nouveau and _creable(options):
+                    liens[NOUVEAU] = f"➕ Créer un nouvel élément ({R.ERP_DOSSIERS[options]['label'].lower()})"
+                choisi = ui.choix(lbl, liens, key, v or "", vide="Choisir") or None
+                valeurs[cle] = choisi
+                if choisi == NOUVEAU:
+                    with st.container(border=True):
+                        st.caption(f"Nouvel élément « {R.ERP_DOSSIERS[options]['label']} », créé en même temps que ce dossier :")
+                        sous, _ = _champs(R.ERP_DOSSIERS[options]["fields"], {}, k, cur, s, f"{prefixe}_{cle}_nv", False)
+                    creations.append((cle, options, sous))
+                elif len(liens) == (1 if NOUVEAU in liens else 0):
+                    st.caption("Liste vide : " + ("choisissez « Créer un nouvel élément » ou " if NOUVEAU in liens else "")
+                               + _ou_creer(options))
+            elif kind == "date":
+                valeurs[cle] = ui.date_txt(lbl, key, v, vide_ok=True) or None
+            elif kind == "money":
+                valeurs[cle] = st.number_input(f"{lbl} ({cur})", min_value=0.0, value=(v / 100) if v is not None else None,
+                                               format="%.2f", key=key)
+            elif kind == "quantity":
+                valeurs[cle] = st.number_input(lbl, min_value=0.0, value=float(v) if v is not None else None,
+                                               format="%.2f", key=key)
+            else:
+                valeurs[cle] = st.text_input(lbl, value=v or "", key=key, max_chars=500).strip() or None
+    return valeurs, creations
+
+
 @st.dialog("Dossier", width="large")
 def formulaire(type_: str, did: str | None = None) -> None:
     s = R.charger("projects", "clients", "personnel", "erp_dossiers")
@@ -39,44 +114,33 @@ def formulaire(type_: str, did: str | None = None) -> None:
         centres = {d["id"]: R.link_label(d) for d in s["erp_dossiers"] if d["type"] == "centres"}
         centre = ui.choix("Centre de coût (si hors chantier)", centres, f"do_cen_{k}", r.get("centre", ""),
                           vide="Non renseigné")
+        if not centres:
+            st.caption("Aucun centre de coût : créez-en dans « Registres, garanties, tâches › Centres de coûts ».")
     with c:
         tiers = ui.choix("Tiers", {p["id"]: p["name"] for p in s["clients"]}, f"do_tiers_{k}", r.get("party", ""),
                          vide="Non renseigné")
-    valeurs = {}
-    cols = st.columns(2)
-    for n, f in enumerate(spec["fields"]):
-        cle, label, kind, requis, options = R.field_spec(f)
-        lbl = label + (" *" if requis else "")
-        v = vals.get(cle)
-        with cols[n % 2]:
-            if kind == "select":
-                valeurs[cle] = ui.choix(lbl, {o: o for o in options}, f"do_{cle}_{k}", v or "", vide="Choisir") or None
-            elif kind == "link":
-                liens = {d["id"]: R.link_label(d) for d in R.dossier_links(s, options)}
-                valeurs[cle] = ui.choix(lbl, liens, f"do_{cle}_{k}", v or "", vide="Choisir") or None
-            elif kind == "date":
-                valeurs[cle] = ui.date_txt(lbl, f"do_{cle}_{k}", v, vide_ok=True) or None
-            elif kind == "money":
-                x = st.number_input(f"{lbl} ({cur})", min_value=0.0, value=(v / 100) if v is not None else None,
-                                    format="%.2f", key=f"do_{cle}_{k}")
-                valeurs[cle] = x
-            elif kind == "quantity":
-                valeurs[cle] = st.number_input(lbl, min_value=0.0, value=float(v) if v is not None else None,
-                                               format="%.2f", key=f"do_{cle}_{k}")
-            else:
-                valeurs[cle] = st.text_input(lbl, value=v or "", key=f"do_{cle}_{k}", max_chars=500).strip() or None
+    valeurs, creations = _champs(spec["fields"], vals, k, cur, s, "do", nouveau=True)
     notes = st.text_input("Observations / références des pièces", value=r.get("notes", ""), key=f"do_notes_{k}",
                           max_chars=2000)
     st.caption(("Un chantier ou un centre de coût est obligatoire. " if spec.get("analytical") else "")
                + "Les liens proposent les dossiers déjà saisis. État : brouillon uniquement.")
     if st.button("Enregistrer", type="primary"):
         try:
-            for f in spec["fields"]:
-                cle, label, kind, _, _ = R.field_spec(f)
-                if kind == "money" and valeurs[cle] is not None:
-                    valeurs[cle] = R.cents(valeurs[cle], label)
-                if kind == "quantity" and valeurs[cle] is not None:
-                    valeurs[cle] = float(valeurs[cle])
+            _convertir(spec["fields"], valeurs)
+            nouveaux = []
+            for cle, cible, vals_new in creations:  # éléments créés à la volée depuis une liste de liens
+                _convertir(R.ERP_DOSSIERS[cible]["fields"], vals_new)
+                lab = R.ERP_DOSSIERS[cible]["label"]
+                n = {"id": db.nouvel_id(), "type": cible, "ref": R.dossier_next_ref(s["erp_dossiers"], cible),
+                     "date": date, "project": projet or "", "centre": centre or "", "party": "", "currency": cur,
+                     "status": "Brouillon", "values": vals_new, "notes": ""}
+                try:
+                    R.validate_dossier(n, s)
+                except ValueError as e:
+                    raise ValueError(f"Nouvel élément « {lab} » : {e}") from e
+                s["erp_dossiers"].append(n)
+                nouveaux.append(n)
+                valeurs[cle] = n["id"]
             rec = {"id": did or db.nouvel_id(), "type": type_, "ref": ref.strip(), "date": date,
                    "project": projet or "", "centre": centre or "", "party": tiers or "", "currency": cur,
                    "status": "Brouillon", "values": valeurs, "notes": notes.strip()}
@@ -88,6 +152,9 @@ def formulaire(type_: str, did: str | None = None) -> None:
                 else:
                     rec["company_snapshot"] = R.company_snapshot()
                     t.inserer("erp_dossiers", rec)
+                for n in nouveaux:
+                    t.inserer("erp_dossiers", {**n, "company_snapshot": R.company_snapshot()},
+                              f"Création rapide : {R.ERP_DOSSIERS[n['type']]['label']} {n['ref']}")
         except ValueError as e:
             st.error(str(e))
         else:
