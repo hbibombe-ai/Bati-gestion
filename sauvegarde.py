@@ -15,6 +15,10 @@ def page() -> None:
     ui.en_tete("Paramètres et sauvegarde", "Catégories de dépenses, sauvegardes et reprise des données du prototype.")
     c = R.company()
 
+    st.subheader("Base de données")
+    ok, txt = db.description_base()
+    (st.success if ok else st.error)(txt)
+
     st.subheader("Catégories de dépenses")
     with st.form("categories"):
         txt = st.text_area("Une catégorie par ligne", value="\n".join(R.expense_categories(c)), height=200)

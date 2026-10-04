@@ -302,21 +302,61 @@ def nouvel_id() -> str:
     return str(uuid.uuid4())
 
 
+DIAGNOSTIC: dict = {"source": "", "probleme": ""}
+
+
+def _nettoyer(url: str) -> str:
+    """Accepte aussi les formes copiées depuis Neon : psql '…', DATABASE_URL=…, guillemets, espaces."""
+    u = str(url).strip()
+    if u.lower().startswith("psql"):
+        u = u[4:].strip()
+    if "=" in u.split("://")[0]:
+        u = u.split("=", 1)[1].strip()
+    return u.strip().strip("'\"").strip()
+
+
 def url_base() -> str:
-    url = None
+    url, source = None, ""
     try:
-        url = st.secrets["database"]["url"]
-    except Exception:  # noqa: BLE001
-        url = os.environ.get("DATABASE_URL")
+        sec = st.secrets
+        if "database" in sec and "url" in sec["database"]:
+            url, source = sec["database"]["url"], "secrets [database] url"
+        elif "DATABASE_URL" in sec:
+            url, source = sec["DATABASE_URL"], "secrets DATABASE_URL"
+        elif "url" in sec:
+            url, source = sec["url"], "secrets url"
+    except Exception as e:  # noqa: BLE001
+        msg = str(e)
+        if "No secrets" not in msg and "not found" not in msg.lower():
+            DIAGNOSTIC["probleme"] = ("Les secrets sont mal écrits et n’ont pas pu être lus (" + type(e).__name__
+                                      + "). Vérifiez les guillemets et la ligne [database]")
+    if not url and os.environ.get("DATABASE_URL"):
+        url, source = os.environ["DATABASE_URL"], "variable DATABASE_URL"
     if not url:
+        DIAGNOSTIC["source"] = "aucune adresse de base trouvée"
         dossier = os.path.join(os.path.dirname(os.path.abspath(__file__)), "donnees")
         os.makedirs(dossier, exist_ok=True)
         return "sqlite:///" + os.path.join(dossier, "bati_gestion.db")
+    url = _nettoyer(url)
+    DIAGNOSTIC["source"] = source
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]
     if url.startswith("postgresql://"):
         url = "postgresql+psycopg2://" + url[len("postgresql://"):]
     return url
+
+
+def description_base() -> tuple[bool, str]:
+    """(permanente ?, texte) pour afficher à l'administrateur où sont enregistrées les données."""
+    u = moteur().url
+    if u.get_backend_name() == "sqlite":
+        return False, ("Base TEMPORAIRE (fichier SQLite sur le serveur) : " + (DIAGNOSTIC["probleme"]
+                       or DIAGNOSTIC["source"] or "aucune adresse de base trouvée") + ".")
+    return True, f"Base permanente PostgreSQL · serveur {u.host} · base {u.database} (lue depuis {DIAGNOSTIC['source']})."
+
+
+def en_ligne() -> bool:
+    return os.path.abspath(__file__).startswith("/mount/")
 
 
 @st.cache_resource(show_spinner=False)
