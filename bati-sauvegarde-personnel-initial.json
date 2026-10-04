@@ -1,0 +1,120 @@
+{
+ "version": 3,
+ "company": {
+  "name": "MY DESTINY BUREAU SERVICE ET DES CONSEILS SARL",
+  "address": "",
+  "phone": "+243 853 774 745 ; +243 821 062 666 ; +243 892 030 653 ; +243 998 842 148",
+  "registration": "CD/KNG/RCCM/13-B-01142",
+  "defaultCurrency": "USD",
+  "v7": {
+   "usualName": "MDY SARL / MY DESTINY SARL",
+   "legalForm": "SARL",
+   "country": "République Démocratique du Congo",
+   "city": "Kinshasa",
+   "year": "2013",
+   "nationalId": "01-F4200-N77086G",
+   "taxId": "A1402351X",
+   "vatId": "0637/DGI/DUI/CDI/VWUB/TVA/2016",
+   "director": "Patrick Kanku Tshinkenke",
+   "beneficialOwner": "Mme Kasongo Mwimbi Nancy — 100 %",
+   "headcount": "20",
+   "website": "www.mydestinycongo.com",
+   "email": "mydestinycongo@gmail.com ; direction.mydestinycongo@gmail.com",
+   "address1": "Avenue Urbanisme n°4511, Quartier Bon Marché, Commune de Barumbu, Kinshasa (Réf. : Paroisse Saint Éloi)",
+   "address2": "Avenue Usoke n°160, Galerie Nathalie, Kinshasa, RDC",
+   "officialAddress": "",
+   "operatingAddress": "",
+   "footer": ""
+  }
+ },
+ "clients": [],
+ "projects": [],
+ "quotes": [],
+ "invoices": [],
+ "expenses": [],
+ "movements": [],
+ "personnel": [
+  {
+   "id": "b2a631e0-cb56-4e38-af20-4049d0901b16",
+   "code": "MD-001",
+   "name": "Patrick Kanku Tshinkenke",
+   "job": "Gérant / Directeur général",
+   "service": "Direction générale",
+   "phone": "",
+   "start": "2013-01-01",
+   "location": "Bureau",
+   "project": "",
+   "active": true,
+   "assignments": [
+    {
+     "date": "2013-01-01",
+     "location": "Bureau",
+     "project": ""
+    }
+   ],
+   "details": {
+    "address": "",
+    "email": "",
+    "emergencyName": "",
+    "emergencyPhone": "",
+    "contractType": "À préciser",
+    "contractReference": "",
+    "contractEnd": "",
+    "notes": "Date d’engagement provisoire (année de création de la société) : à corriger."
+   },
+   "v7": {
+    "establishment": "Kinshasa",
+    "team": "",
+    "costCentre": "",
+    "category": "",
+    "cnss": "",
+    "civilStatus": "",
+    "children": null,
+    "paymentMethod": ""
+   },
+   "salary": null
+  },
+  {
+   "id": "a3247789-7a75-475a-a229-83e0c2443d2c",
+   "code": "MD-002",
+   "name": "Nancy Kasongo Mwimbi",
+   "job": "Associée (bénéficiaire effective)",
+   "service": "Direction générale",
+   "phone": "",
+   "start": "2013-01-01",
+   "location": "Bureau",
+   "project": "",
+   "active": true,
+   "assignments": [
+    {
+     "date": "2013-01-01",
+     "location": "Bureau",
+     "project": ""
+    }
+   ],
+   "details": {
+    "address": "",
+    "email": "",
+    "emergencyName": "",
+    "emergencyPhone": "",
+    "contractType": "À préciser",
+    "contractReference": "",
+    "contractEnd": "",
+    "notes": "Date d’engagement provisoire (année de création de la société) : à corriger."
+   },
+   "v7": {
+    "establishment": "Kinshasa",
+    "team": "",
+    "costCentre": "",
+    "category": "",
+    "cnss": "",
+    "civilStatus": "",
+    "children": null,
+    "paymentMethod": ""
+   },
+   "salary": null
+  }
+ ],
+ "attendance": [],
+ "payroll": []
+}
