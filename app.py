@@ -95,22 +95,16 @@ if utilisateur.get("doit_changer_mdp"):
 
 ui.appliquer_style()
 
-if utilisateur.get("role") == "admin" and db.en_ligne():
-    _ok, _txt = db.description_base()
-    if not _ok:
-        st.error("**Attention : " + _txt + "** Tout ce qui est saisi sera effacé au prochain redémarrage. Ajoutez "
-                 "l’adresse Neon dans « Gérer l’application › Settings › Secrets » sous la forme :  \n"
-                 "`[database]`  \n`url = \"postgresql://…\"`")
-
 # ------------------------------------------------------------------ navigation
 try:
-    import accueil, audit, caisse, chantiers, compte, comptes_tiers, depenses  # noqa: E401,E402
-    import devis_factures, dossiers, justificatifs, paie, personnel, rapports, recherche  # noqa: E401,E402
-    import reprise_historique, sauvegarde, societe, tiers, utilisateurs  # noqa: E401,E402
+    from vues import (accueil, audit, caisse, chantiers, compte, comptes_tiers, depenses,  # noqa: E402
+                      devis_factures, dossiers, justificatifs, paie, personnel, presence_kobo, rapports,
+                      recherche, reprise_historique, sauvegarde, societe, tiers, utilisateurs)
 except ModuleNotFoundError as e:
-    st.error(f"Fichier introuvable : {e.name}.py. Déposez tous les fichiers .py du dossier sur GitHub, à côté de "
-             "app.py, puis redémarrez l’application.")
+    st.error(f"Fichier introuvable : {e.name}. Le dossier « vues » (21 fichiers) doit être déposé sur GitHub, à côté "
+             "de app.py, avec les dossiers « static » et « .streamlit ». Ajoutez-le puis redémarrez l’application.")
     st.stop()
+from vues import memo_v7
 reprise = reprise_historique
 
 
@@ -150,8 +144,10 @@ PAGES = [
     ("Achats & Stocks", "Stocks", "stocks", "inventory_2", ["achats"], espace("stocks")),
     ("Achats & Stocks", "Matériel et charroi", "charroi", "local_shipping", ["charroi"], espace("charroi")),
     ("RH & Paie", "Personnel et pointage", "personnel", "badge", ["personnel", "pointage"], personnel.page),
+    ("RH & Paie", "Présence KoboCollect", "presence-kobo", "phone_android", ["pointage"], presence_kobo.page),
     ("RH & Paie", "Paie", "paie", "payments", ["paie"], paie.page),
     ("RH & Paie", "Congés, missions, avances", "dossiers-rh", "event_available", ["personnel"], espace("rh")),
+    ("Finance", "Circuit financier V7", "circuit-v7", "account_tree", ["depenses"], memo_v7.page),
     ("Finance", "Dépenses", "depenses", "shopping_bag", ["depenses"], depenses.page),
     ("Finance", "Justificatifs", "justificatifs", "attach_file", ["justificatifs"], justificatifs.page),
     ("Finance", "Journal de caisse", "caisse", "point_of_sale", ["tresorerie"], tresor("cash")),

@@ -201,6 +201,24 @@ attendance = sa.Table(
     sa.Column("project", Str(80), nullable=True),
     sa.UniqueConstraint("person_id", "date", name="un_pointage_par_jour"),
 )
+kobo_pointages = sa.Table(  # lignes des fiches KoboCollect déjà traitées (jamais importées deux fois)
+    "kobo_pointages", meta,
+    sa.Column("id", Str(200), primary_key=True),            # identifiant de la fiche Kobo + n° de ligne
+    sa.Column("fiche", Str(80), nullable=False),
+    sa.Column("soumis_le", Str(40), default=""),
+    sa.Column("date", Str(10), default=""),
+    sa.Column("person_id", Str(80), default=""),
+    sa.Column("agent", Str(200), default=""),
+    sa.Column("statut", Str(20), default=""),
+    sa.Column("heures", sa.Float, default=0),
+    sa.Column("lieu", Str(120), default=""),
+    sa.Column("pointeur", Str(300), default=""),
+    sa.Column("resultat", Str(30), nullable=False),          # Importé, Remplacé, Identique, Ignoré
+    sa.Column("attendance_id", sa.Integer, nullable=True),
+    sa.Column("donnees", Js, nullable=True),
+    sa.Column("traite_le", sa.DateTime, nullable=True),
+    sa.Column("traite_par", Str(), default=""),
+)
 payroll = sa.Table(
     "payroll", meta,
     sa.Column("id", Str(80), primary_key=True),
@@ -282,12 +300,16 @@ history_batches = sa.Table(  # lots de reprise historique importés depuis le mo
     sa.Column("created_by", sa.Integer, nullable=True),
 )
 
+from schema_v7 import ajouter
+ajouter(meta)
+
 TABLES = {t.name: t for t in meta.sorted_tables}
 NOMS_OBJETS = {
     "clients": "Tiers", "projects": "Chantier", "quotes": "Devis", "invoices": "Facture",
     "expenses": "Dépense", "movements": "Mouvement de trésorerie", "supplier_invoices": "Facture fournisseur",
     "supplier_payments": "Paiement fournisseur", "supplier_allocations": "Affectation d'avance",
     "supplier_reversals": "Contre-passation", "personnel": "Personnel", "attendance": "Pointage",
+    "kobo_pointages": "Pointage KoboCollect",
     "payroll": "Paie", "erp_dossiers": "Dossier", "company_history": "Société", "pieces": "Justificatif",
     "history_batches": "Lot historique", "users": "Utilisateur", "settings": "Paramètre",
 }
@@ -302,61 +324,21 @@ def nouvel_id() -> str:
     return str(uuid.uuid4())
 
 
-DIAGNOSTIC: dict = {"source": "", "probleme": ""}
-
-
-def _nettoyer(url: str) -> str:
-    """Accepte aussi les formes copiées depuis Neon : psql '…', DATABASE_URL=…, guillemets, espaces."""
-    u = str(url).strip()
-    if u.lower().startswith("psql"):
-        u = u[4:].strip()
-    if "=" in u.split("://")[0]:
-        u = u.split("=", 1)[1].strip()
-    return u.strip().strip("'\"").strip()
-
-
 def url_base() -> str:
-    url, source = None, ""
+    url = None
     try:
-        sec = st.secrets
-        if "database" in sec and "url" in sec["database"]:
-            url, source = sec["database"]["url"], "secrets [database] url"
-        elif "DATABASE_URL" in sec:
-            url, source = sec["DATABASE_URL"], "secrets DATABASE_URL"
-        elif "url" in sec:
-            url, source = sec["url"], "secrets url"
-    except Exception as e:  # noqa: BLE001
-        msg = str(e)
-        if "No secrets" not in msg and "not found" not in msg.lower():
-            DIAGNOSTIC["probleme"] = ("Les secrets sont mal écrits et n’ont pas pu être lus (" + type(e).__name__
-                                      + "). Vérifiez les guillemets et la ligne [database]")
-    if not url and os.environ.get("DATABASE_URL"):
-        url, source = os.environ["DATABASE_URL"], "variable DATABASE_URL"
+        url = st.secrets["database"]["url"]
+    except Exception:  # noqa: BLE001
+        url = os.environ.get("DATABASE_URL")
     if not url:
-        DIAGNOSTIC["source"] = "aucune adresse de base trouvée"
         dossier = os.path.join(os.path.dirname(os.path.abspath(__file__)), "donnees")
         os.makedirs(dossier, exist_ok=True)
         return "sqlite:///" + os.path.join(dossier, "bati_gestion.db")
-    url = _nettoyer(url)
-    DIAGNOSTIC["source"] = source
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]
     if url.startswith("postgresql://"):
         url = "postgresql+psycopg2://" + url[len("postgresql://"):]
     return url
-
-
-def description_base() -> tuple[bool, str]:
-    """(permanente ?, texte) pour afficher à l'administrateur où sont enregistrées les données."""
-    u = moteur().url
-    if u.get_backend_name() == "sqlite":
-        return False, ("Base TEMPORAIRE (fichier SQLite sur le serveur) : " + (DIAGNOSTIC["probleme"]
-                       or DIAGNOSTIC["source"] or "aucune adresse de base trouvée") + ".")
-    return True, f"Base permanente PostgreSQL · serveur {u.host} · base {u.database} (lue depuis {DIAGNOSTIC['source']})."
-
-
-def en_ligne() -> bool:
-    return os.path.abspath(__file__).startswith("/mount/")
 
 
 @st.cache_resource(show_spinner=False)
@@ -453,6 +435,16 @@ class Transaction:
 
     def inserer(self, nom: str, valeurs: dict, resume: str | None = None):
         t = TABLES[nom]
+        if nom in ("expenses", "supplier_invoices", "supplier_payments") and valeurs.get("project"):
+            managed = self.cx.execute(sa.select(TABLES["v7_records"].c.id).where(
+                TABLES["v7_records"].c.kind == "budget", TABLES["v7_records"].c.project == valeurs["project"])).first()
+            if managed:
+                raise ValueError("Chantier V7 : utilisez le circuit financier avec imputation DQE et validations.")
+        if nom == "movements" and valeurs.get("kind") != "v7" and valeurs.get("direction") == "out" and valeurs.get("project"):
+            managed = self.cx.execute(sa.select(TABLES["v7_records"].c.id).where(
+                TABLES["v7_records"].c.kind == "budget", TABLES["v7_records"].c.project == valeurs["project"])).first()
+            if managed:
+                raise ValueError("Paiement V7 : autorisation du circuit financier requise.")
         res = self.cx.execute(t.insert().values(**valeurs))
         id_ = valeurs.get("id") or (res.inserted_primary_key[0] if res.inserted_primary_key else None)
         self._auditer("Création", nom, id_, None, valeurs, resume)
@@ -463,6 +455,9 @@ class Transaction:
         avant = self.get(nom, id_)
         if avant is None:
             raise ValueError("Cet enregistrement n'existe plus. Actualisez la page.")
+        if nom == "movements" and avant.get("kind") == "v7":
+            if set(valeurs) != {"journal"} or any(valeurs["journal"].get(k) != (avant.get("journal") or {}).get(k) for k in ("v7_account", "v7_source")):
+                raise ValueError("Mouvement V7 figé : contre-passation obligatoire.")
         self.cx.execute(t.update().where(t.c.id == id_).values(**valeurs))
         self._auditer("Modification", nom, id_, {k: avant.get(k) for k in valeurs},
                       valeurs, resume)
@@ -470,6 +465,8 @@ class Transaction:
     def supprimer(self, nom: str, id_, resume: str | None = None) -> None:
         t = TABLES[nom]
         avant = self.get(nom, id_)
+        if nom == "v7_records" or (nom == "movements" and avant and avant.get("kind") == "v7"):
+            raise ValueError("Historique V7 conservé : utilisez annulation ou contre-passation.")
         self.cx.execute(t.delete().where(t.c.id == id_))
         self._auditer("Suppression", nom, id_, avant, None, resume)
 

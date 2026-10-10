@@ -1,4 +1,6 @@
-# Bâti Gestion — MY DESTINY SARL (version Python)
+# Bâti Gestion — MY DESTINY SARL (intégration du mémo V7)
+
+Le **Circuit financier V7** intègre désormais budgets DQE, validations N0 → N1 → N2 → N3 → DG, paiements partiels, avances, écritures et préparation fiscale RDC. Lire [le guide de mise en service](INTEGRATION_MEMO.md) avant activation. Le mémo complet est téléchargeable dans l’application. Les recommandations fiscales restent à vérifier pour le régime effectif de MY DESTINY.
 
 Logiciel de gestion de MY DESTINY SARL pour ses activités de construction : chantiers, devis et factures, dépenses et justificatifs, caisse et trésorerie, clients et fournisseurs, personnel, pointage et paie, ainsi que les dossiers d'achats, de stocks, de matériel, de comptabilité et les registres.
 
@@ -40,6 +42,7 @@ C'est la réécriture en Python ([Streamlit](https://streamlit.io)) du prototype
 - **Matériel et charroi :** équipements et véhicules, maintenance, carburant.
 - **RH et paie :**
   - fiches du personnel, contrats, affectations datées, pointage quotidien ;
+  - présence journalière par téléphone avec **KoboCollect** : présence du jour, import contrôlé des fiches ;
   - préparation des bulletins (montants saisis, ou assiette × taux) et états de paie ;
   - congés, missions, avances.
 - **Finance :**
@@ -89,13 +92,44 @@ Hébergement proposé : **Streamlit Community Cloud** pour l'application et **Ne
    - Complétez la fiche « Société MY DESTINY ».
    - Créez un compte par personne dans **Utilisateurs**.
 
-## Ce qui reste préparatoire
+## Présence journalière par KoboCollect
+
+Rubrique **RH & Paie › Présence KoboCollect** (direction, RH, conducteurs de travaux).
+
+1. **Formulaire.** Onglet « Formulaire et réglages » : téléchargez le formulaire (XLSForm). Il contient la liste à jour des
+   agents actifs (nom et matricule) et des lieux (bureau, chantiers en cours). Dans KoboToolbox : **Nouveau › Importer un
+   XLSForm**, puis **Déployer**. Quand le personnel ou les chantiers changent, retéléchargez-le et faites
+   **Remplacer le formulaire › Redéployer**.
+2. **Collecte.** Chaque pointeur remplit une fiche par lieu et par jour dans KoboCollect : il choisit le lieu, puis ajoute
+   une ligne par agent (présence, heure d'arrivée, heure de départ, pause, observation). Les heures travaillées sont
+   calculées : départ − arrivée − pause.
+3. **Import.** Onglet « Importer les fiches » : **Récupérer les fiches KoboCollect** (automatique) ou chargement de l'export
+   Excel de Kobo (XLS, « Valeurs et en-têtes XML »). Chaque ligne est contrôlée avec les règles du pointage manuel
+   (agent connu et actif, date entre l'engagement et aujourd'hui, un seul pointage par agent et par jour, heures nulles
+   pour absence, congé, maladie et repos). Les lignes en conflit avec un pointage déjà saisi ne remplacent celui-ci
+   que si vous cochez la case prévue. Une ligne déjà traitée n'est jamais importée deux fois.
+4. **Suivi.** Onglet « Présence du jour » : présents, absents, heures par lieu et agents actifs non pointés.
+
+Les pointages importés apparaissent dans « Personnel et pointage » avec l'observation « KoboCollect, pointeur … » ; chaque
+import est inscrit au journal d'audit.
+
+**Récupération automatique.** Dans KoboToolbox : Paramètres du compte › Sécurité › **Clé API**. Ajoutez-la aux secrets :
+
+```toml
+[kobo]
+jeton = "votre-cle-api-kobo"
+```
+
+puis indiquez dans l'onglet « Formulaire et réglages » le serveur et l'identifiant du formulaire (la suite de caractères
+après `/forms/` dans l'adresse du formulaire). Sans clé API, l'import par fichier Excel reste possible.
+
+## Rubriques historiques et périmètre de l’intégration
 
 Ces limites étaient déjà celles du prototype ; elles restent signalées dans l'application :
 - Les dossiers d'achats, de stocks, de matériel et de comptabilité sont des fiches **préparatoires**. Ils ne modifient ni les stocks, ni la trésorerie, ni la comptabilité.
 - La paie est une **préparation** : les montants sociaux et fiscaux sont saisis ou calculés avec un taux saisi, sans barème légal intégré. Il n'y a pas encore de circuit de validation RH, finance et DG.
 - Pas de comptabilité SYSCOHADA générée automatiquement (grand livre, balance, clôtures).
-- Les circuits d'approbation à plusieurs niveaux du cahier des charges V7 (N0 à N3 puis DG, plafonds, délégations) restent à définir avec la direction. Seule la validation des justificatifs est en place.
+- Le circuit N0 à N3 puis DG est disponible dans Circuit financier V7, avec délégations et dérogation budgétaire DG. Les anciennes pages ne créent pas de nouveaux paiements pour un chantier muni d’un budget V7.
 - L'application demande une connexion internet ; le mode hors ligne du prototype n'existe plus. Une application gratuite de Streamlit se met en veille après quelques jours sans visite et se réveille en une trentaine de secondes.
 
 ## Fichiers
@@ -107,6 +141,7 @@ Ces limites étaient déjà celles du prototype ; elles restent signalées dans 
 | `db.py` | Tables, accès à la base, transactions et journal d'audit |
 | `regles.py` | Règles de gestion reprises du prototype (monnaies, trésorerie, comptes tiers, paie, dossiers) |
 | `pdf.py` | Génération des documents PDF |
+| `kobo.py` | Présence par KoboCollect : formulaire XLSForm, récupération des fiches, contrôles et import |
 | `migration.py` | Sauvegarde, restauration, reprise des données du prototype |
 | `reprise.py` | Modèle Excel de reprise historique et ses contrôles |
 | `ui.py`, `nav.py` | Style, champs et tableaux communs, liens entre pages |

@@ -378,6 +378,15 @@ def erp_forecast(s: dict, as_of: str) -> dict:
     for i in s["supplier_invoices"]:
         if i["date"] <= as_of:
             add(i["currency"], i["due"], i["amount"] - supplier_paid(s, i["id"]), "outgoing")
+    import gestion_v7 as V
+    for op in V.records("operation"):
+        d=op["data"]
+        if d["status"] in ("Brouillon","Soumise","Annulée"):continue
+        remaining=d["amount"]-sum(x["amount"] for x in d["payments"] if not x.get("reversed"))
+        add(op["currency"],d["due"],remaining,"outgoing")
+    for due in V.records("fiscal"):
+        d=due["data"]
+        if d["status"]!="Déposée et réglée":add(due["currency"],d["due"],d["amount"],"outgoing")
     return res
 
 
