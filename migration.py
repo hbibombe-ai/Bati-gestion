@@ -20,7 +20,7 @@ import regles as R
 
 METIER = ["clients", "projects", "quotes", "invoices", "expenses", "movements", "supplier_invoices", "supplier_payments",
           "supplier_allocations", "supplier_reversals", "personnel", "attendance", "kobo_pointages", "payroll",
-          "erp_dossiers", "company_history", "history_batches", "pieces", "v7_records"]
+          "erp_dossiers", "company_history", "history_batches", "pieces", "v7_records", "import_lots", "import_mappings"]
 FORMAT = "bati-gestion-python-1"
 
 
@@ -47,7 +47,7 @@ def _deserial(v):
 # ------------------------------------------------------------------ sauvegarde de cette application
 def export_json(avec_pieces: bool = True) -> bytes:
     data = {"format": FORMAT, "exported_at": dt.datetime.now().isoformat(timespec="seconds"),
-            "company": R.company(), "v7_settings": {k: db.parametre(k) for k in ("v7_policy", "v7_fiscal")}, "tables": {}}
+            "company": R.company(), "v7_settings": {k: db.parametre(k) for k in ("v7_policy", "v7_fiscal", "imports_limites")}, "tables": {}}
     for t in METIER:
         sans = () if (avec_pieces or t != "pieces") else ("content",)
         data["tables"][t] = [{k: _serial(v) for k, v in r.items()} for r in db.tout(t, sans=sans)]
@@ -75,7 +75,7 @@ def _remplacer(tables: dict, company: dict | None, resume: str, v7_settings=None
     with db.transaction(resume) as t:
         for nom in reversed(METIER):
             t.cx.execute(db.TABLES[nom].delete())
-        for cle in ("v7_policy", "v7_fiscal"):
+        for cle in ("v7_policy", "v7_fiscal", "imports_limites"):
             t.parametre(cle, (v7_settings or {}).get(cle))
         if company:
             t.parametre("company", company)

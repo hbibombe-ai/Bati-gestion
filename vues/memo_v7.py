@@ -229,10 +229,17 @@ def settings_tab():
             reason=st.text_input('Motif de révocation')
             if st.form_submit_button('Révoquer'):execute(V.revoke_delegate,row['id'],reason)
 
+def imports_tab():
+    from vues import imports as IMP
+    st.caption('Budgets, cumuls, besoins N0, reliquats fournisseurs, soldes et balance d’ouverture : import contrôlé, puis validation Finance et activation DG dans le Centre de reprise.')
+    IMP.encart(['budgets','besoins','fournisseurs','tresorerie','comptabilite'],'Importer depuis Excel')
+    st.subheader('Reliquats repris activés')
+    IMP._reliquats_tab()
+
 def page():
     auth.exiger('depenses');ui.en_tete('Circuit financier V7','Budgets DQE, validations, paiements, avances et comptabilité du mémo.')
-    tabs=st.tabs(['Budgets DQE','Opérations','Trésorerie','Comptabilité','Fiscalité RDC','Contrôles et mémo'])
-    for tab,fn,module in zip(tabs,[budget_tab,operations_tab,treasury_tab,accounting_tab,fiscal_tab,settings_tab],['chantiers','depenses','tresorerie','comptabilite','comptabilite','depenses']):
+    tabs=st.tabs(['Budgets DQE','Opérations','Trésorerie','Comptabilité','Fiscalité RDC','Contrôles et mémo','Reprises et imports'])
+    for tab,fn,module in zip(tabs,[budget_tab,operations_tab,treasury_tab,accounting_tab,fiscal_tab,settings_tab,imports_tab],['chantiers','depenses','tresorerie','comptabilite','comptabilite','depenses','depenses']):
         with tab:
             if auth.voit(module):
                 try:fn()

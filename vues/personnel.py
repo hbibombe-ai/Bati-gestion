@@ -234,6 +234,8 @@ def page() -> None:
     if not (auth.voit("personnel") or auth.voit("pointage")):
         auth.exiger("personnel")
     ui.en_tete("Personnel et pointage", "Personnel, affectation actuelle et présence quotidienne.")
+    from vues import imports as IMP
+    IMP.encart(["personnel", "presences"], "Importer du personnel, des affectations ou des présences depuis Excel")
     s = R.charger("personnel", "projects", "attendance")
     salaires = auth.voit("paie")
     staff = sorted(s["personnel"], key=lambda p: (not p["active"], p["name"].lower()))

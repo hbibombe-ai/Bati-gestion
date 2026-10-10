@@ -35,22 +35,22 @@ DESCRIPTION_ROLES = {
 MODULES = ["accueil", "recherche", "rapports", "chantiers", "tiers", "comptes", "commercial", "depenses",
            "justificatifs", "validation_pieces", "tresorerie", "personnel", "pointage", "paie", "achats",
            "charroi", "projets", "comptabilite", "documents", "societe", "reprise", "utilisateurs",
-           "sauvegarde", "audit"]
+           "sauvegarde", "audit", "imports"]
 DROITS = {
     "admin": {m: "w" for m in MODULES},
     "finance": {"accueil": "r", "recherche": "r", "rapports": "r", "chantiers": "r", "tiers": "w",
                 "comptes": "w", "commercial": "w", "depenses": "w", "justificatifs": "w",
                 "validation_pieces": "w", "tresorerie": "w", "achats": "w", "charroi": "r", "projets": "r",
-                "comptabilite": "w", "documents": "w", "societe": "r", "reprise": "w"},
+                "comptabilite": "w", "documents": "w", "societe": "r", "reprise": "w", "imports": "w"},
     "rh": {"accueil": "r", "recherche": "r", "chantiers": "r", "personnel": "w", "pointage": "w", "paie": "w",
-           "documents": "r", "societe": "r"},
+           "documents": "r", "societe": "r", "imports": "w"},
     "chantier": {"accueil": "r", "recherche": "r", "chantiers": "w", "tiers": "r", "depenses": "w",
                  "justificatifs": "w", "personnel": "r", "pointage": "w", "achats": "w", "charroi": "w",
-                 "projets": "w", "documents": "r", "societe": "r"},
+                 "projets": "w", "documents": "r", "societe": "r", "imports": "w"},
     "lecteur": {"accueil": "r", "recherche": "r", "rapports": "r", "chantiers": "r", "tiers": "r", "comptes": "r",
                 "commercial": "r", "depenses": "r", "justificatifs": "r", "tresorerie": "r", "personnel": "r",
                 "achats": "r", "charroi": "r", "projets": "r", "comptabilite": "r", "documents": "r",
-                "societe": "r"},
+                "societe": "r", "imports": "r"},
 }
 
 ITERATIONS = 260_000

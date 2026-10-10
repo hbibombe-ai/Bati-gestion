@@ -100,11 +100,12 @@ try:
     from vues import (accueil, audit, caisse, chantiers, compte, comptes_tiers, depenses,  # noqa: E402
                       devis_factures, dossiers, justificatifs, paie, personnel, presence_kobo, rapports,
                       recherche, reprise_historique, sauvegarde, societe, tiers, utilisateurs)
+    from vues import memo_v7
+    from vues import imports as centre_imports
 except ModuleNotFoundError as e:
-    st.error(f"Fichier introuvable : {e.name}. Le dossier « vues » (21 fichiers) doit être déposé sur GitHub, à côté "
-             "de app.py, avec les dossiers « static » et « .streamlit ». Ajoutez-le puis redémarrez l’application.")
+    st.error(f"Fichier introuvable : {e.name}. Les dossiers « vues » et « imports » doivent être déposés sur GitHub, à "
+             "côté de app.py, avec les dossiers « static » et « .streamlit ». Ajoutez-les puis redémarrez l’application.")
     st.stop()
-from vues import memo_v7
 reprise = reprise_historique
 
 
@@ -158,7 +159,9 @@ PAGES = [
      espace("comptabilite")),
     ("Comptabilité & Documents", "Registres, garanties, tâches", "documents", "folder_open", ["documents"],
      espace("administration")),
-    ("Comptabilité & Documents", "Reprise historique", "reprise", "history", ["reprise"], reprise.page),
+    ("Comptabilité & Documents", "Centre de reprise et d’import", "imports", "upload_file", ["imports"],
+     centre_imports.page),
+    ("Comptabilité & Documents", "Reprise historique (lots chantier)", "reprise", "history", ["reprise"], reprise.page),
     ("Administration", "Société MY DESTINY", "societe", "apartment", ["societe"], societe.page),
     ("Administration", "Utilisateurs", "utilisateurs", "group", ["utilisateurs"], utilisateurs.page),
     ("Administration", "Paramètres et sauvegarde", "sauvegarde", "settings", ["sauvegarde"], sauvegarde.page),

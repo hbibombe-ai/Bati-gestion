@@ -96,6 +96,9 @@ def page() -> None:
     ecrit = auth.modifie("chantiers")
     if ecrit and st.button("Nouveau chantier", type="primary", icon=":material/add:"):
         formulaire()
+    if ecrit:
+        from vues import imports as IMP
+        IMP.encart(["chantiers"], "Importer des chantiers depuis Excel")
     if not s["projects"]:
         st.info("Organisez vos travaux : ajoutez un premier chantier, son client et son budget.")
         return

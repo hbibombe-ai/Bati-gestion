@@ -68,6 +68,9 @@ def page() -> None:
     ecrit = auth.modifie("tiers")
     if ecrit and st.button("Nouveau tiers", type="primary", icon=":material/person_add:"):
         formulaire()
+    if ecrit:
+        from vues import imports as IMP
+        IMP.encart(["tiers"], "Importer des tiers depuis Excel")
     a, b, c = st.columns([2, 1, 1])
     q = a.text_input("Rechercher un tiers", placeholder="Nom, code, téléphone…", key="t_q")
     role = b.selectbox("Rôle", [""] + list(R.PARTY_ROLES), format_func=lambda r: R.PARTY_ROLES.get(r, "Tous les rôles"))

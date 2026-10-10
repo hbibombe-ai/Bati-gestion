@@ -132,6 +132,19 @@ Ces limites étaient déjà celles du prototype ; elles restent signalées dans 
 - Le circuit N0 à N3 puis DG est disponible dans Circuit financier V7, avec délégations et dérogation budgétaire DG. Les anciennes pages ne créent pas de nouveaux paiements pour un chantier muni d’un budget V7.
 - L'application demande une connexion internet ; le mode hors ligne du prototype n'existe plus. Une application gratuite de Streamlit se met en veille après quelques jours sans visite et se réveille en une trentaine de secondes.
 
+## Import généralisé depuis Excel (archives, reprise à une date de bascule, opérations en cours)
+
+Rubrique **Comptabilité & Documents › Centre de reprise et d’import**, et encarts « Importer depuis Excel » dans les pages
+Tiers, Chantiers, Personnel et Circuit financier V7. Chaque fonction propose un modèle téléchargeable, un contrôle
+préalable (aperçu conservé côté serveur) et une confirmation transactionnelle ; les lots sont tracés (empreinte du fichier,
+mode, date de bascule, correspondances, rapprochement avant / après). En reprise, rien n’est actif avant la validation
+Finance puis l’activation DG par des personnes distinctes de l’importateur. Voir [la notice](IMPORTS_NOTICE.md) et
+[la matrice de couverture](IMPORTS_MATRICE.md).
+
+Tests : `PYTHONPATH=. python tests/test_imports.py` (SQLite) ; avec PostgreSQL :
+`BG_TEST_PG="postgresql+psycopg2://utilisateur@hote/base_de_test" PYTHONPATH=. python tests/test_imports.py`
+(la base de test est vidée).
+
 ## Fichiers
 
 | Fichier | Rôle |
@@ -144,6 +157,9 @@ Ces limites étaient déjà celles du prototype ; elles restent signalées dans 
 | `kobo.py` | Présence par KoboCollect : formulaire XLSForm, récupération des fiches, contrôles et import |
 | `migration.py` | Sauvegarde, restauration, reprise des données du prototype |
 | `reprise.py` | Modèle Excel de reprise historique et ses contrôles |
+| `imports/` | Import généralisé : registre des modèles, lecture bornée, contrôles, adaptateurs, service, rapprochement |
+| `vues/imports.py` | Centre de reprise et d’import ; encarts réutilisables des pages métier |
+| `modeles/` | Modèles Excel par fonction (version 2026.10-1), aussi téléchargeables dans l’application |
 | `ui.py`, `nav.py` | Style, champs et tableaux communs, liens entre pages |
 | `vues/` | Une rubrique par fichier |
 | `.streamlit/config.toml` | Couleurs et polices |

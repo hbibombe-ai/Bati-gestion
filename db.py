@@ -302,6 +302,8 @@ history_batches = sa.Table(  # lots de reprise historique importés depuis le mo
 
 from schema_v7 import ajouter
 ajouter(meta)
+from imports.tables import ajouter as ajouter_imports
+ajouter_imports(meta)
 
 TABLES = {t.name: t for t in meta.sorted_tables}
 NOMS_OBJETS = {
@@ -312,6 +314,8 @@ NOMS_OBJETS = {
     "kobo_pointages": "Pointage KoboCollect",
     "payroll": "Paie", "erp_dossiers": "Dossier", "company_history": "Société", "pieces": "Justificatif",
     "history_batches": "Lot historique", "users": "Utilisateur", "settings": "Paramètre",
+    "v7_records": "Circuit V7", "import_lots": "Lot d’import", "import_previews": "Aperçu d’import",
+    "import_mappings": "Correspondance d’import",
 }
 
 
@@ -433,17 +437,19 @@ class Transaction:
     def lire(self, sql: str, **params) -> list[dict]:
         return [_ligne(r) for r in self.cx.execute(sa.text(sql), params)]
 
+    def _chantier_v7(self, project: str) -> bool:
+        """Vrai si le chantier possède un budget V7 non rejeté (un budget importé puis rejeté ne bloque rien)."""
+        v7 = TABLES["v7_records"]
+        rows = self.cx.execute(sa.select(v7.c.data).where(v7.c.kind == "budget", v7.c.project == project)).fetchall()
+        return any((r[0] or {}).get("status") != "Rejeté" for r in rows)
+
     def inserer(self, nom: str, valeurs: dict, resume: str | None = None):
         t = TABLES[nom]
         if nom in ("expenses", "supplier_invoices", "supplier_payments") and valeurs.get("project"):
-            managed = self.cx.execute(sa.select(TABLES["v7_records"].c.id).where(
-                TABLES["v7_records"].c.kind == "budget", TABLES["v7_records"].c.project == valeurs["project"])).first()
-            if managed:
+            if self._chantier_v7(valeurs["project"]):
                 raise ValueError("Chantier V7 : utilisez le circuit financier avec imputation DQE et validations.")
         if nom == "movements" and valeurs.get("kind") != "v7" and valeurs.get("direction") == "out" and valeurs.get("project"):
-            managed = self.cx.execute(sa.select(TABLES["v7_records"].c.id).where(
-                TABLES["v7_records"].c.kind == "budget", TABLES["v7_records"].c.project == valeurs["project"])).first()
-            if managed:
+            if self._chantier_v7(valeurs["project"]):
                 raise ValueError("Paiement V7 : autorisation du circuit financier requise.")
         res = self.cx.execute(t.insert().values(**valeurs))
         id_ = valeurs.get("id") or (res.inserted_primary_key[0] if res.inserted_primary_key else None)

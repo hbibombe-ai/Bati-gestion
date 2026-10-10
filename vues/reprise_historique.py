@@ -15,6 +15,9 @@ def page() -> None:
     auth.exiger("reprise")
     ui.en_tete("Reprise historique", "Préparez les archives chantier par chantier : modèle Excel, contrôle, conservation.")
     ecrit = auth.modifie("reprise")
+    st.info("Ces lots chantier restent des archives (modèle version 1). Pour importer toutes les fonctions (tiers, "
+            "budgets, reliquats, soldes, personnel, pièces…) en archives, en reprise à une date de bascule ou en "
+            "opérations en cours, utilisez le « Centre de reprise et d’import ».")
     st.markdown("1. Téléchargez et remplissez le modèle Excel (un chantier par classeur).  \n"
                 "2. Chargez-le : l’application contrôle la structure, les références, les dates et les montants.  \n"
                 "3. Conservez le lot. Ses dépenses apparaissent ensuite dans « Justificatifs ».")

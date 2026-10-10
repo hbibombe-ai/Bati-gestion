@@ -15,7 +15,7 @@ import db
 import regles as R
 
 LEVELS = ('N1', 'N2', 'N3', 'DG')
-KINDS = ('budget', 'operation', 'account', 'entry', 'reconciliation', 'fiscal', 'rate', 'delegation', 'invoice', 'payment')
+KINDS = ('budget', 'operation', 'account', 'entry', 'reconciliation', 'fiscal', 'rate', 'delegation', 'invoice', 'payment', 'carryover')
 CHART = {'101':'Capital social','16':'Emprunts','23':'Bâtiments','24':'Matériel et mobilier',
  '28':'Amortissements','32':'Matières premières','4011':'Fournisseurs','4013':'Sous-traitants',
  '4017':'Retenues de garantie fournisseurs','4091':'Avances fournisseurs','411':'Clients',
@@ -69,7 +69,12 @@ def insert(tx,kind,ref,project,currency,data):
 def event(data,u,action,note=''):
     data.setdefault('history',[]).append(dict(user=u['id'],name=u['nom'],action=action,note=note,at=db.maintenant().isoformat()))
 
-def policy():return db.parametre('v7_policy') or deepcopy(DEFAULT_POLICY)
+def policy(tx=None):
+    """Seuils de contrôle ; lus dans la transaction en cours si elle est fournie (pas de seconde connexion)."""
+    if tx is not None:
+        v=tx.cx.execute(sa.select(db.settings.c.valeur).where(db.settings.c.cle=='v7_policy')).scalar()
+        return v or deepcopy(DEFAULT_POLICY)
+    return db.parametre('v7_policy') or deepcopy(DEFAULT_POLICY)
 
 def configure_policy(data):
     actor(['admin']);thresholds=data.get('thresholds');levels=data.get('levels')
@@ -81,14 +86,25 @@ def configure_policy(data):
 
 def create_account(ref,label,currency,ledger,legacy):
     u=actor(['admin','finance'])
+    with db.transaction('Compte de trésorerie V7') as t:return _create_account_tx(t,u,ref,label,currency,ledger,legacy)
+
+def _create_account_tx(t,u,ref,label,currency,ledger,legacy,extra=None):
+    """Création d'un compte dans une transaction existante (saisie ou import)."""
     if legacy not in R.CASH_ACCOUNTS or not ledger.startswith(('52','57')):raise ValueError('Compte bancaire ou caisse et rattachement historique requis.')
-    with db.transaction('Compte de trésorerie V7') as t:
-        if any(r['currency']==currency and r['data']['ledger']==ledger for r in records('account',t)):
-            raise ValueError('Utilisez une subdivision comptable distincte par compte et devise.')
-        return insert(t,'account',ref,'',currency,dict(label=label,ledger=ledger,legacy=legacy,creator=u['id']))
+    if any(r['currency']==currency and r['data']['ledger']==ledger for r in records('account',t)):
+        raise ValueError('Utilisez une subdivision comptable distincte par compte et devise.')
+    return insert(t,'account',ref,'',currency,dict(label=label,ledger=ledger,legacy=legacy,creator=u['id'],**(extra or {})))
 
 def create_budget(project,code,lines,contract,forecast,revenue=None):
-    u=actor(['admin','finance','chantier']);p=db.un('projects',project)
+    u=actor(['admin','finance','chantier'])
+    with db.transaction('Budget DQE à approuver') as t:return _create_budget_tx(t,u,project,code,lines,contract,forecast,revenue)
+
+def active_budgets(rows):
+    """Budgets non rejetés (un budget importé puis rejeté reste conservé mais n'a plus d'effet)."""
+    return [r for r in rows if r['data'].get('status')!='Rejeté']
+
+def _create_budget_tx(t,u,project,code,lines,contract,forecast,revenue=None,extra=None):
+    p=t.get('projects',project)
     if not p:raise ValueError('Choisissez un chantier existant.')
     if not code.strip() or not lines:raise ValueError('Code chantier et postes DQE requis.')
     seen=set()
@@ -96,20 +112,23 @@ def create_budget(project,code,lines,contract,forecast,revenue=None):
         if not line.get('code') or line['code'] in seen or not line.get('label'):raise ValueError('Postes DQE manquants ou en double.')
         seen.add(line['code']);amount(line['budget']);amount(line.get('forecast',line['budget']))
     amount(contract);amount(forecast);amount(contract if revenue is None else revenue)
-    with db.transaction('Budget DQE à approuver') as t:
-        if any(r['project']==project for r in records('budget',t)):raise ValueError('Ce chantier possède déjà un budget V7.')
-        data=dict(code=code,lines=lines,contract=contract,forecast=forecast,revenue=contract if revenue is None else revenue,
-                  initial=sum(x['budget'] for x in lines),status='À approuver',creator=u['id'],history=[],revision=1)
-        event(data,u,'Création budget');return insert(t,'budget',code,project,p['currency'],data)
+    if any(r['project']==project for r in active_budgets(records('budget',t))):raise ValueError('Ce chantier possède déjà un budget V7.')
+    data=dict(code=code,lines=lines,contract=contract,forecast=forecast,revenue=contract if revenue is None else revenue,
+              initial=sum(x.get('initial',x['budget']) for x in lines),status='À approuver',creator=u['id'],history=[],revision=1,**(extra or {}))
+    event(data,u,'Création budget'+(' (import '+extra['import_lot_ref']+')' if extra and extra.get('import_lot_ref') else ''))
+    return insert(t,'budget',code,project,p['currency'],data)
 
 def approve_budget(id_,reason):
     u=actor(['admin'])
-    with db.transaction('Approbation du budget DQE') as t:
-        r=get(t,id_,'budget');d=deepcopy(r['data'])
-        if d['creator']==u['id']:raise ValueError('La DG ne peut pas approuver son propre budget.')
-        if not reason.strip():raise ValueError('Motif obligatoire.')
-        if d['status']=='Approuvé':raise ValueError('Budget déjà approuvé.')
-        d['status']='Approuvé';event(d,u,'Approbation DG',reason);save(t,r,d)
+    with db.transaction('Approbation du budget DQE') as t:_approve_budget_tx(t,u,id_,reason)
+
+def _approve_budget_tx(t,u,id_,reason):
+    r=get(t,id_,'budget');d=deepcopy(r['data'])
+    if d['creator']==u['id']:raise ValueError('La DG ne peut pas approuver son propre budget.')
+    if not reason.strip():raise ValueError('Motif obligatoire.')
+    if d['status']=='Approuvé':raise ValueError('Budget déjà approuvé.')
+    if d['status']=='Rejeté':raise ValueError('Budget rejeté : importez un lot corrigé.')
+    d['status']='Approuvé';event(d,u,'Approbation DG',reason);save(t,r,d)
 
 def revise_budget(id_,lines,forecast,revenue,reason):
     u=actor(['finance','chantier','admin'])
@@ -128,37 +147,55 @@ def approve_revision(id_,reason):
         if not p or p['creator']==u['id'] or not reason.strip():raise ValueError('Révision indépendante et motif requis.')
         d.update({k:p[k] for k in ('lines','forecast','revenue')});d.pop('pending');d['revision']+=1;event(d,u,'Révision approuvée DG',reason);save(t,r,d)
 
-def metrics(budget,ops):
+def carry_effects(c):
+    """Effets d'un reliquat de reprise approuvé : comptés une seule fois, sans créer de faux paiement."""
+    d=c['data'];kind=d['type'];paid=sum(p['amount'] for p in d.get('payments',[]) if not p.get('reversed'))
+    returned=sum(p['amount'] for p in d.get('returns',[]));justified=sum(j['amount'] for j in d.get('justifications',[]) if j['status']=='Validée')
+    if kind=='cost':return dict(cost=d['amount'],open=0,cash=0,advance=0)
+    if kind=='commitment':return dict(cost=0,open=0 if d['status']=='Soldée' else d['amount'],cash=0,advance=0)
+    if kind=='debt':return dict(cost=0,open=0,cash=paid,advance=0)
+    if kind=='advance':return dict(cost=justified,open=0,cash=-returned,advance=max(0,d['amount']-justified-returned))
+    return dict(cost=0,open=0,cash=0,advance=0)
+
+def metrics(budget,ops,carry=None,tx=None):
     d=budget['data'];active=[r for r in ops if r['project']==budget['project'] and r['currency']==budget['currency'] and r['data'].get('status')!='Annulée']
-    out=[]
+    carry=records('carryover',tx) if carry is None else carry
+    carry=[c for c in carry if c['project']==budget['project'] and c['currency']==budget['currency'] and c['data']['status'] in ('Approuvée','Soldée')]
+    out=[];thresholds=policy(tx)['thresholds']
     for line in d['lines']:
         selected=[r['data'] for r in active if r['data']['post']==line['code']]
-        realized=sum(x.get('cost',0) for x in selected)
-        opened=sum(max(0,x['amount']-x.get('cost',0)) for x in selected if x['status'] in ('Approuvée','Commandée','Réceptionnée','Facturée','Partiellement payée','Payée'))
-        cash=sum(sum(p['amount'] for p in x.get('payments',[]) if not p.get('reversed'))-sum(p['amount'] for p in x.get('returns',[])) for x in selected)
-        advance=sum(max(0,sum(p['amount'] for p in x.get('payments',[]) if not p.get('reversed'))-sum(j['amount'] for j in x.get('justifications',[]) if j['status']=='Validée')-sum(p['amount'] for p in x.get('returns',[]))) for x in selected if x['nature']=='Avance')
+        effects=[carry_effects(c) for c in carry if c['data'].get('post')==line['code']]
+        realized=sum(x.get('cost',0) for x in selected)+sum(e['cost'] for e in effects)
+        opened=sum(max(0,x['amount']-x.get('cost',0)) for x in selected if x['status'] in ('Approuvée','Commandée','Réceptionnée','Facturée','Partiellement payée','Payée'))+sum(e['open'] for e in effects)
+        cash=sum(sum(p['amount'] for p in x.get('payments',[]) if not p.get('reversed'))-sum(p['amount'] for p in x.get('returns',[])) for x in selected)+sum(e['cash'] for e in effects)
+        advance=sum(max(0,sum(p['amount'] for p in x.get('payments',[]) if not p.get('reversed'))-sum(j['amount'] for j in x.get('justifications',[]) if j['status']=='Validée')-sum(p['amount'] for p in x.get('returns',[]))) for x in selected if x['nature']=='Avance')+sum(e['advance'] for e in effects)
         committed=opened+realized;rate=100*committed/line['budget'] if line['budget'] else (100 if committed else 0)
-        alert=next((label for threshold,label in reversed(list(zip(policy()['thresholds'],['Information','Vigilance','Critique','Blocage']))) if rate>=threshold),'Normal')
+        alert=next((label for threshold,label in reversed(list(zip(thresholds,['Information','Vigilance','Critique','Blocage']))) if rate>=threshold),'Normal')
         out.append(dict(code=line['code'],label=line['label'],budget=line['budget'],open=opened,cost=realized,cash=cash,advance=advance,available=line['budget']-committed,engagement_rate=rate,alert=alert,forecast=line.get('forecast',line['budget'])))
     return dict(lines=out,budget=sum(x['budget'] for x in out),open=sum(x['open'] for x in out),cost=sum(x['cost'] for x in out),cash=sum(x['cash'] for x in out),advance=sum(x['advance'] for x in out),available=sum(x['available'] for x in out),forecast=d['forecast'],variance=sum(x['budget'] for x in out)-d['forecast'],margin=d['contract']-sum(x['budget'] for x in out),final_margin=d['revenue']-d['forecast'])
 
 def budget_for(project,tx):
-    rows=[r for r in records('budget',tx) if r['project']==project]
+    rows=[r for r in active_budgets(records('budget',tx)) if r['project']==project]
     if not rows or rows[0]['data']['status']!='Approuvé':raise ValueError('Budget DQE approuvé requis.')
     return get(tx,rows[0]['id'],'budget')
 
 def create_operation(ref,project,post,party,label,nature,value,due,expense_account='605',currency=None):
-    u=actor(['admin','finance','chantier']);amount(value,True);date(due)
+    u=actor(['admin','finance','chantier'])
+    with db.transaction('Demande N0 V7') as t:return _create_operation_tx(t,u,ref,project,post,party,label,nature,value,due,expense_account,currency)
+
+def _create_operation_tx(t,u,ref,project,post,party,label,nature,value,due,expense_account='605',currency=None,extra=None):
+    """Demande N0 dans une transaction existante (saisie ou import) : toujours en brouillon, sans validation."""
+    amount(value,True);date(due)
     if nature not in ('Achat','Dépense','Avance'):raise ValueError('Nature invalide.')
-    if not label.strip() or not party or not db.un('clients',party):raise ValueError('Objet et bénéficiaire enregistré requis.')
+    if not label.strip() or not party or not t.get('clients',party):raise ValueError('Objet et bénéficiaire enregistré requis.')
     if expense_account not in CHART or not expense_account.startswith(('6','2','3')):raise ValueError('Compte de coût ou actif à valider.')
-    with db.transaction('Demande N0 V7') as t:
-        b=budget_for(project,t)
-        if currency and currency!=b['currency']:raise ValueError('Convertissez explicitement dans la devise du budget ; aucune conversion implicite.')
-        if post not in {x['code'] for x in b['data']['lines']}:raise ValueError('Poste DQE requis.')
-        d=dict(post=post,party=party,label=label,nature=nature,amount=value,due=due,expense_account=expense_account,
-               status='Brouillon',creator=u['id'],level=0,approvals=[],payments=[],cost=0,history=[],justifications=[],returns=[])
-        event(d,u,'Création N0');return insert(t,'operation',ref,project,b['currency'],d)
+    b=budget_for(project,t)
+    if currency and currency!=b['currency']:raise ValueError('Convertissez explicitement dans la devise du budget ; aucune conversion implicite.')
+    if post not in {x['code'] for x in b['data']['lines']}:raise ValueError('Poste DQE requis.')
+    d=dict(post=post,party=party,label=label,nature=nature,amount=value,due=due,expense_account=expense_account,
+           status='Brouillon',creator=u['id'],level=0,approvals=[],payments=[],cost=0,history=[],justifications=[],returns=[],**(extra or {}))
+    event(d,u,'Création N0'+(' (import '+extra['import_lot_ref']+')' if extra and extra.get('import_lot_ref') else ''))
+    return insert(t,'operation',ref,project,b['currency'],d)
 
 def edit_operation(id_,value,label,due):
     u=actor(['admin','finance','chantier']);amount(value,True);date(due)
@@ -205,7 +242,7 @@ def approve(id_,reason,exception=False,reject=False):
         if not reason.strip():raise ValueError('Commentaire de contrôle obligatoire.')
         if reject:
             d.update(status='Brouillon',level=0,approvals=[]);event(d,u,'Rejet '+level,reason);save(t,r,d);return
-        b=budget_for(r['project'],t);m=metrics(b,records('operation',t));line=next(x for x in m['lines'] if x['code']==d['post'])
+        b=budget_for(r['project'],t);m=metrics(b,records('operation',t),tx=t);line=next(x for x in m['lines'] if x['code']==d['post'])
         if level=='DG' and line['available']<=d['amount'] and not exception:raise ValueError('Seuil 100 % atteint : dérogation DG explicite requise.')
         if exception and level!='DG':raise ValueError('Seule la DG autorise le dépassement.')
         d['approvals'].append(dict(user=u['id'],level=level,at=db.maintenant().isoformat(),reason=reason));d['level']+=1
@@ -268,11 +305,14 @@ def _touch_account(t,a):
 
 def opening(account,value,date_,ref):
     u=actor(['admin','finance']);amount(value,True);date(date_)
-    with db.transaction('Solde initial V7') as t:
-        a=get(t,account,'account')
-        if records('operation',t) and any((m.get('journal') or {}).get('v7_account')==account for m in table_rows(t,'movements')):raise ValueError('Utilisez un ajustement documenté pour un compte déjà mouvementé.')
-        _touch_account(t,a);_move(t,a,'opening:'+ref,'',date_,value,'in','Solde initial '+ref)
-        _entry(t,'opening:'+account,'',a['currency'],date_,'Solde initial',a['data']['ledger'],'12',value)
+    with db.transaction('Solde initial V7') as t:_opening_tx(t,account,value,date_,ref)
+
+def _opening_tx(t,account,value,date_,ref,strict=False):
+    amount(value,True);date(date_)
+    a=get(t,account,'account');moved=any((m.get('journal') or {}).get('v7_account')==account for m in table_rows(t,'movements'))
+    if moved and (strict or records('operation',t)):raise ValueError('Utilisez un ajustement documenté pour un compte déjà mouvementé.')
+    _touch_account(t,a);_move(t,a,'opening:'+ref,'',date_,value,'in','Solde initial '+ref)
+    _entry(t,'opening:'+account,'',a['currency'],date_,'Solde initial',a['data']['ledger'],'12',value)
 
 def pay(id_,account,value,date_,reference):
     u=actor(['admin','finance']);amount(value,True);date(date_)
@@ -430,7 +470,7 @@ def fiscal_done(id_,proof):
 
 def alerts():
     out=[];today=R.today()
-    for b in records('budget'):
+    for b in active_budgets(records('budget')):
         for l in metrics(b,records('operation'))['lines']:
             if l['alert']!='Normal':out.append(dict(type='Budget',ref=b['ref']+'/'+l['code'],message=l['alert'],due=''))
     for r in records('operation'):
@@ -448,10 +488,15 @@ def alerts():
             first=min((p['date'] for p in d['payments'] if not p.get('reversed')),default=None)
             if first and unresolved>0 and (dt.date.fromisoformat(today)-dt.date.fromisoformat(first)).days>policy()['max_advance_days']:
                 out.append(dict(type='Avance échue',ref=r['ref'],message='Délai de régularisation dépassé',due=d['due']))
+    for c in records('carryover'):
+        d=c['data']
+        if d['status']!='Approuvée':continue
+        if d['type']=='debt' and d.get('due','9999')<today:out.append(dict(type='Dette reprise',ref=c['ref'],message='Reliquat fournisseur échu',due=d.get('due','')))
+        if d['type']=='advance' and carry_effects(c)['advance']>0:out.append(dict(type='Avance reprise',ref=c['ref'],message='Reliquat d’avance à justifier ou restituer',due=d.get('due','')))
     return out
 
 def guard_legacy(project):
-    if any(r['project']==project for r in records('budget')):
+    if any(r['project']==project for r in active_budgets(records('budget'))):
         raise ValueError('Chantier suivi en V7 : utilisez Circuit financier V7 pour conserver validations et imputations DQE.')
 
 def upload_piece(id_,name,content,date_,value):
@@ -479,3 +524,117 @@ def consolidated(reporting,rates_by_currency,date_):
             rate=r['data']['rate'];rate_id=r['id']
         rows.append(dict(account=account['ref'],currency=source,original=value,rate=rate,rate_id=rate_id,converted=converted(value,rate)))
     return dict(currency=reporting,total=sum(r['converted'] for r in rows),rows=rows)
+
+# ------------------------------------------------------------------ reprises à une date de bascule
+# Un reliquat repris (dette, avance, coût antérieur, engagement ouvert, solde d'ouverture, balance d'ouverture)
+# est un dossier distinct, relié à son archive. Il n'a d'effet qu'après activation par la DG, personne distincte de
+# l'importateur. Aucun ancien paiement n'est rejoué et aucune validation antérieure n'est recréée.
+CARRY_TYPES=('cost','commitment','debt','advance','opening','entry')
+CARRY_LABELS={'cost':'Coûts exécutés antérieurs','commitment':'Engagement ouvert repris','debt':'Dette fournisseur reprise',
+              'advance':'Avance restant à justifier','opening':'Solde de trésorerie d’ouverture','entry':'Balance d’ouverture'}
+
+def _carryover_tx(t,u,ref,project,currency,data):
+    if data.get('type') not in CARRY_TYPES:raise ValueError('Type de reprise invalide.')
+    if data['type'] not in ('entry',):amount(data['amount'],data['type'] in ('opening','debt','advance'))
+    d={**data,'status':'À approuver','creator':u['id'],'approvals':[],'payments':[],'returns':[],'justifications':[],'history':[]}
+    event(d,u,'Reprise préparée',data.get('lot_ref',''));return insert(t,'carryover',ref,project,currency,d)
+
+def _cash_in_entries(tx,currency):
+    return any(r['currency']==currency and any(str(l['account']).startswith(('52','57')) for l in r['data']['lines'])
+               for r in records('entry',tx) if r['ref'].startswith('OPENING-BALANCE:'))
+
+def _approve_carryover_tx(t,u,id_,reason):
+    r=get(t,id_,'carryover');d=deepcopy(r['data'])
+    if u['role']!='admin':raise ValueError('Activation réservée à la DG.')
+    if d['creator']==u['id']:raise ValueError('La DG ne peut pas activer une reprise qu’elle a elle-même importée.')
+    if d['status']!='À approuver':raise ValueError('Reprise déjà traitée.')
+    if not reason.strip():raise ValueError('Motif d’activation obligatoire.')
+    if d['type'] in ('cost','commitment') or (d['type'] in ('debt','advance') and d.get('post')):
+        b=budget_for(r['project'],t)
+        if b['currency']!=r['currency']:raise ValueError('Devise du reliquat différente du budget : aucune conversion implicite.')
+        if d.get('post') and d['post'] not in {x['code'] for x in b['data']['lines']}:raise ValueError('Poste DQE absent du budget approuvé.')
+    if d['type']=='opening':
+        if _cash_in_entries(t,r['currency']):raise ValueError('La balance d’ouverture contient déjà la trésorerie de cette devise : double comptabilisation refusée.')
+        _opening_tx(t,d['account'],d['amount'],d['date'],r['ref'],strict=True)
+    if d['type']=='entry':
+        lines=d['lines']
+        if not lines or sum(l['debit'] for l in lines)!=sum(l['credit'] for l in lines):raise ValueError('Écriture déséquilibrée.')
+        if any(str(l['account']).startswith(('52','57')) for l in lines) and any(x['ref'].startswith('OPENING:') and x['currency']==r['currency'] for x in records('entry',t)):
+            raise ValueError('Des soldes de trésorerie d’ouverture existent déjà pour cette devise : double comptabilisation refusée.')
+        insert(t,'entry','OPENING-BALANCE:'+r['ref'],'',r['currency'],dict(date=d['date'],label=d['label'],lines=lines,source='reprise',carryover=r['id']))
+    d['status']='Approuvée';d['approvals'].append(dict(user=u['id'],level='DG',at=db.maintenant().isoformat(),reason=reason))
+    event(d,u,'Activation DG',reason);save(t,r,d)
+
+def _reject_carryover_tx(t,u,id_,reason):
+    r=get(t,id_,'carryover');d=deepcopy(r['data'])
+    if d['status']!='À approuver':raise ValueError('Seule une reprise non activée peut être rejetée ; sinon contre-passation contrôlée.')
+    d['status']='Rejetée';event(d,u,'Rejet',reason);save(t,r,d)
+
+def _carry_paid(d):return sum(p['amount'] for p in d.get('payments',[]) if not p.get('reversed'))
+
+def pay_carryover(id_,account,value,date_,reference):
+    """Règlement d'une dette fournisseur reprise : seul le reliquat est payable, par un trésorier indépendant."""
+    u=actor(['admin','finance']);amount(value,True);date(date_)
+    with db.transaction('Règlement d’un reliquat repris') as t:
+        r=get(t,id_,'carryover');d=deepcopy(r['data']);a=get(t,account,'account')
+        if d['type']!='debt' or d['status']!='Approuvée':raise ValueError('Dette reprise activée requise.')
+        if u['id']==d['creator'] or any(x['user']==u['id'] for x in d['approvals']):raise ValueError('Le trésorier doit être distinct de l’importateur et de la DG qui a activé la reprise.')
+        if a['currency']!=r['currency']:raise ValueError('Devise différente : conversion explicite nécessaire.')
+        if date_<d.get('cutover',''):raise ValueError('Un paiement antérieur à la bascule appartient aux archives : il n’est pas redébité.')
+        paid=_carry_paid(d)
+        if paid+value>d['amount']:raise ValueError('Paiement supérieur au reliquat repris.')
+        if not reference.strip() or any(p['ref']==reference for op in records('operation',t)+records('carryover',t) for p in op['data'].get('payments',[])):raise ValueError('Référence de règlement vide ou déjà utilisée.')
+        if balance(a,t)<value:raise ValueError('Solde insuffisant sur le compte.')
+        insert(t,'payment',reference,r['project'],r['currency'],dict(carryover=r['id'],account=account,amount=value,date=date_))
+        _touch_account(t,a);pid=db.nouvel_id();d['payments'].append(dict(id=pid,ref=reference,amount=value,date=date_,account=account,user=u['id']))
+        _move(t,a,pid,r['project'],date_,value,'out',r['ref']+' '+reference)
+        _entry(t,'pay:'+pid,r['project'],r['currency'],date_,d['label'],'4011',a['data']['ledger'],value)
+        if paid+value==d['amount']:d['status']='Soldée'
+        event(d,u,'Règlement du reliquat',reference);save(t,r,d)
+
+def upload_carryover_piece(id_,name,content,date_,value):
+    import hashlib
+    from vues.justificatifs import mime_de,nom_sur
+    u=actor(['admin','finance','chantier']);amount(value,True);date(date_);mime=mime_de(content)
+    if not mime or len(content)>5*1024*1024:raise ValueError('PDF JPEG ou PNG de 5 Mo maximum requis.')
+    with db.transaction('Pièce d’une avance reprise') as t:
+        r=get(t,id_,'carryover');d=deepcopy(r['data'])
+        if d['type']!='advance' or d['status']!='Approuvée':raise ValueError('Avance reprise activée requise.')
+        h=hashlib.sha256(content).hexdigest()
+        if t.lire('select id from pieces where hash = :h',h=h):raise ValueError('Ce fichier est déjà enregistré.')
+        pid=db.nouvel_id();t.inserer('pieces',dict(id=pid,expense_id='',batch_id='',name=nom_sur(name,mime),mime=mime,content=content,size=len(content),hash=h,type='Justificatif reprise',beneficiary=d.get('party',''),document_date=date_,amount=value,currency=r['currency'],status='Préparée',reason='',uploaded_at=db.maintenant(),uploaded_by=u['id']))
+        d['justifications'].append(dict(piece=pid,amount=value,status='Soumise',uploader=u['id']));event(d,u,'Dépôt justificatif',name);save(t,r,d)
+
+def validate_carryover_justification(id_,piece,accept,reason):
+    u=actor(['admin','finance'])
+    with db.transaction('Contrôle de justificatif repris') as t:
+        r=get(t,id_,'carryover');d=deepcopy(r['data']);j=next((x for x in d['justifications'] if x['piece']==piece),None);p=t.get('pieces',piece,True)
+        if not j or j['status']!='Soumise' or u['id'] in (j['uploader'],d['creator']) or not reason.strip():raise ValueError('Contrôle indépendant avec motif requis.')
+        if accept:
+            used=sum(x['amount'] for x in d['justifications'] if x['status']=='Validée')+sum(x['amount'] for x in d['returns'])
+            if used+j['amount']>d['amount']:raise ValueError('Justificatifs supérieurs au reliquat de l’avance.')
+            _entry(t,'justify:'+piece,r['project'],r['currency'],p['document_date'],d['label'],d.get('expense_account','605'),'581',j['amount'])
+        j['status']='Validée' if accept else 'Rejetée';j['validator']=u['id'];j['reason']=reason
+        t.maj('pieces',piece,dict(status=j['status'],validated_by=u['id'],validated_at=db.maintenant(),reason=reason))
+        if carry_effects({'data':d})['advance']==0:d['status']='Soldée'
+        event(d,u,'Contrôle justificatif',reason);save(t,r,d)
+
+def return_carryover_advance(id_,account,value,date_,reference):
+    u=actor(['admin','finance']);amount(value,True);date(date_)
+    with db.transaction('Restitution d’une avance reprise') as t:
+        r=get(t,id_,'carryover');d=deepcopy(r['data']);a=get(t,account,'account')
+        if d['type']!='advance' or d['status']!='Approuvée' or a['currency']!=r['currency']:raise ValueError('Avance reprise activée et devise concordante requises.')
+        if value>carry_effects({'data':d})['advance'] or not reference.strip():raise ValueError('Restitution supérieure au reliquat ou référence absente.')
+        _touch_account(t,a);rid=db.nouvel_id();d['returns'].append(dict(id=rid,amount=value,date=date_,ref=reference))
+        _move(t,a,rid,r['project'],date_,value,'in','Restitution '+reference);_entry(t,'return:'+rid,r['project'],r['currency'],date_,d['label'],a['data']['ledger'],'581',value)
+        if carry_effects({'data':d})['advance']==0:d['status']='Soldée'
+        event(d,u,'Restitution',reference);save(t,r,d)
+
+def close_commitment(id_,reason):
+    """Solde un engagement repris lorsqu'il est remplacé par une demande du circuit ou abandonné (pas de double compte)."""
+    u=actor(['admin','finance'])
+    if not reason.strip():raise ValueError('Motif obligatoire.')
+    with db.transaction('Engagement repris soldé') as t:
+        r=get(t,id_,'carryover');d=deepcopy(r['data'])
+        if d['type']!='commitment' or d['status']!='Approuvée':raise ValueError('Engagement repris activé requis.')
+        d['status']='Soldée';event(d,u,'Engagement soldé',reason);save(t,r,d)
