@@ -290,11 +290,14 @@ def invoice(id_,ref,date_,value):
 def table_rows(tx,name):
     return [dict(r._mapping) for r in tx.cx.execute(sa.select(db.TABLES[name]))]
 
-def balance(account,tx=None):
+def balance(account,tx=None,date_=None):
+    # Avec date_ : seuls les mouvements datés au plus tard à cette date de situation sont comptés (BG-ADM-002, §1).
     total=0
     rows=table_rows(tx,'movements') if tx else db.tout('movements')
     for m in rows:
-        if (m.get('journal') or {}).get('v7_account')==account['id']:total+=m['amount']*(1 if m['direction']=='in' else -1)
+        if (m.get('journal') or {}).get('v7_account')!=account['id']:continue
+        if date_ is not None and str(m.get('date') or '')[:10]>date_:continue
+        total+=m['amount']*(1 if m['direction']=='in' else -1)
     return total
 
 def _move(t,a,source,project,date_,value,direction,label):
@@ -515,7 +518,7 @@ def consolidated(reporting,rates_by_currency,date_):
     if reporting not in R.CURRENCIES:raise ValueError('Devise de présentation invalide.')
     rates={r['id']:r for r in records('rate')};rows=[]
     for account in records('account'):
-        source=account['currency'];value=balance(account)
+        source=account['currency'];value=balance(account,date_=date_)
         if source==reporting:rate='1';rate_id=''
         else:
             r=rates.get(rates_by_currency.get(source))

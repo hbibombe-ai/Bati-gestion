@@ -89,16 +89,51 @@ def _remplacer(tables: dict, company: dict | None, resume: str, v7_settings=None
     return compte
 
 
-def import_json(contenu: bytes) -> dict:
-    data = json.loads(contenu.decode("utf-8"))
-    if data.get("format") != FORMAT:
+def verifier_sauvegarde(data: dict, role: str | None) -> dict:
+    """Contrôle complet d'une sauvegarde AVANT toute écriture (BG-ADM-002, §1).
+
+    Une table absente du fichier est refusée : elle ne doit jamais être interprétée comme une table à vider.
+    Les délégations financières V7 ne peuvent être restaurées que par la DG (rôle admin).
+    """
+    if not isinstance(data, dict) or data.get("format") != FORMAT:
         raise ValueError("Ce fichier n’est pas une sauvegarde Bâti Gestion (version Python).")
+    tables = data.get("tables")
+    if not isinstance(tables, dict):
+        raise ValueError("Sauvegarde incomplète : bloc des tables absent. Aucune donnée n’a été modifiée.")
+    absentes = [n for n in METIER if n not in tables]
+    if absentes:
+        raise ValueError("Sauvegarde incomplète, tables absentes : " + ", ".join(absentes)
+                         + ". Restauration refusée ; aucune donnée n’a été modifiée.")
+    for nom in METIER:
+        lignes = tables[nom]
+        if not isinstance(lignes, list) or any(not isinstance(r, dict) for r in lignes):
+            raise ValueError(f"Table {nom} illisible. Aucune donnée n’a été modifiée.")
+        vus = set()
+        for r in lignes:
+            if "id" in r:
+                if r["id"] in vus:
+                    raise ValueError(f"Identifiant en double dans {nom} : {r['id']}. Restauration refusée.")
+                vus.add(r["id"])
+    for p in tables["pieces"]:
+        if "content" not in p:
+            raise ValueError("Cette sauvegarde ne contient pas les fichiers des justificatifs ; restauration impossible.")
+        contenu = _deserial(p["content"])
+        if not isinstance(contenu, (bytes, bytearray)):
+            raise ValueError(f"Pièce {p.get('name', '')} illisible. Restauration refusée.")
+        if p.get("hash") and hashlib.sha256(bytes(contenu)).hexdigest() != p["hash"]:
+            raise ValueError(f"Pièce {p.get('name', '')} : empreinte SHA-256 incohérente. Restauration refusée.")
+    if any(r.get("kind") == "delegation" for r in tables["v7_records"]) and role != "admin":
+        raise ValueError("Cette sauvegarde contient des délégations financières V7 : restauration réservée à la DG.")
+    return {nom: len(tables[nom]) for nom in METIER}
+
+
+def import_json(contenu: bytes, role: str | None = None) -> dict:
+    data = json.loads(contenu.decode("utf-8"))
+    verifier_sauvegarde(data, role)          # tout contrôle avant la moindre écriture
     tables = {}
     for nom in METIER:
         cols = {c.name for c in db.TABLES[nom].c}
-        tables[nom] = [{k: _deserial(v) for k, v in r.items() if k in cols} for r in data["tables"].get(nom, [])]
-    if any("content" not in p for p in tables["pieces"]):
-        raise ValueError("Cette sauvegarde ne contient pas les fichiers des justificatifs ; restauration impossible.")
+        tables[nom] = [{k: _deserial(v) for k, v in r.items() if k in cols} for r in data["tables"][nom]]
     return _remplacer(tables, data.get("company"), "Restauration d'une sauvegarde", data.get("v7_settings"))
 
 

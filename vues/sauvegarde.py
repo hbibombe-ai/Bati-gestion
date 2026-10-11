@@ -69,7 +69,7 @@ def page() -> None:
                 n = M.import_brouillons(f.getvalue(), auth.utilisateur()["id"])
                 msg = f"Brouillons repris : {n['lots']} lot(s) historique(s) et {n['pieces']} pièce(s) préparée(s)."
             else:
-                n = M.import_json(f.getvalue())
+                n = M.import_json(f.getvalue(), auth.utilisateur()["role"])
                 msg = "Sauvegarde restaurée."
         except (ValueError, KeyError, TypeError) as e:
             st.error(f"Import impossible : {e}")
