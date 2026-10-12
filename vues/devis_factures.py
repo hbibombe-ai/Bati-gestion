@@ -46,6 +46,8 @@ def formulaire(kind: str, did: str | None = None) -> None:
     s = R.charger("clients", "projects", "quotes", "invoices")
     r = next((x for x in s[kind] if x["id"] == did), None) or {}
     k = f"{kind}_{did or 'new'}"
+    # identifiant du document : celui du dossier existant, ou un identifiant réservé pour une création
+    cible = did or st.session_state.setdefault(f"df_id_{k}", db.nouvel_id())
     st.markdown(f"#### {'Modifier' if r else 'Nouveau'} {NOMS[kind][1]}")
     a, b = st.columns(2)
     with a:
@@ -97,6 +99,7 @@ def formulaire(kind: str, did: str | None = None) -> None:
         st.error(str(e))
         lines = None
     st.caption("Montants dans la monnaie choisie, sans calcul automatique de taxe.")
+    ui.pieces_jointes(kind, cible, peut_ajouter=True, titre="Pièces jointes (facture, bon de commande, PV…)")
     if st.button("Enregistrer", type="primary", key=f"df_ok_{k}"):
         try:
             if lines is None:
@@ -135,10 +138,11 @@ def formulaire(kind: str, did: str | None = None) -> None:
             else:
                 rec["company_snapshot"] = R.company_snapshot()
                 with db.transaction(f"Création {NOMS[kind][1]} {rec['number']}") as t:
-                    t.inserer(kind, {"id": db.nouvel_id(), **rec})
+                    t.inserer(kind, {"id": cible, **rec})
         except ValueError as e:
             st.error(str(e))
         else:
+            st.session_state.pop(f"df_id_{k}", None)  # la prochaine création recevra un nouvel identifiant
             ui.succes("Enregistrement effectué.")
 
 

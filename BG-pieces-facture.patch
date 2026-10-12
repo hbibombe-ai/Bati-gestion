@@ -1,0 +1,1416 @@
+diff -ruN -x __pycache__ src/auth.py src_new/auth.py
+--- src/auth.py	2026-10-10 11:32:33.000000000 +0100
++++ src_new/auth.py	2026-10-12 12:56:00.363123651 +0100
+@@ -35,24 +35,44 @@
+ MODULES = ["accueil", "recherche", "rapports", "chantiers", "tiers", "comptes", "commercial", "depenses",
+            "justificatifs", "validation_pieces", "tresorerie", "personnel", "pointage", "paie", "achats",
+            "charroi", "projets", "comptabilite", "documents", "societe", "reprise", "utilisateurs",
+-           "sauvegarde", "audit", "imports"]
++           "sauvegarde", "audit", "imports",
++           "approbation_n1", "approbation_n2", "approbation_n3", "approbation_dg"]
+ DROITS = {
+     "admin": {m: "w" for m in MODULES},
+     "finance": {"accueil": "r", "recherche": "r", "rapports": "r", "chantiers": "r", "tiers": "w",
+                 "comptes": "w", "commercial": "w", "depenses": "w", "justificatifs": "w",
+                 "validation_pieces": "w", "tresorerie": "w", "achats": "w", "charroi": "r", "projets": "r",
+-                "comptabilite": "w", "documents": "w", "societe": "r", "reprise": "w", "imports": "w"},
++                "comptabilite": "w", "documents": "w", "societe": "r", "reprise": "w", "imports": "w",
++                "approbation_n2": "w", "approbation_n3": "w"},
+     "rh": {"accueil": "r", "recherche": "r", "chantiers": "r", "personnel": "w", "pointage": "w", "paie": "w",
+            "documents": "r", "societe": "r", "imports": "w"},
+     "chantier": {"accueil": "r", "recherche": "r", "chantiers": "w", "tiers": "r", "depenses": "w",
+                  "justificatifs": "w", "personnel": "r", "pointage": "w", "achats": "w", "charroi": "w",
+-                 "projets": "w", "documents": "r", "societe": "r", "imports": "w"},
++                 "projets": "w", "documents": "r", "societe": "r", "imports": "w", "approbation_n1": "w"},
+     "lecteur": {"accueil": "r", "recherche": "r", "rapports": "r", "chantiers": "r", "tiers": "r", "comptes": "r",
+                 "commercial": "r", "depenses": "r", "justificatifs": "r", "tresorerie": "r", "personnel": "r",
+                 "achats": "r", "charroi": "r", "projets": "r", "comptabilite": "r", "documents": "r",
+                 "societe": "r", "imports": "r"},
+ }
+ 
++# Libellés des rubriques (affichés dans la gestion des accès).
++MODULE_LABELS = {
++    "accueil": "Vue d’ensemble", "recherche": "Recherche globale", "rapports": "Rapports et alertes",
++    "chantiers": "Chantiers", "tiers": "Clients et fournisseurs", "comptes": "Comptes tiers",
++    "commercial": "Devis, factures, prospects", "depenses": "Dépenses et circuit financier V7",
++    "justificatifs": "Justificatifs", "validation_pieces": "Validation des pièces", "tresorerie": "Trésorerie et journal de caisse",
++    "personnel": "Personnel et congés", "pointage": "Pointage et présence Kobo", "paie": "Paie (salaires)",
++    "achats": "Achats et stocks", "charroi": "Matériel et charroi", "projets": "DQE, situations, qualité",
++    "comptabilite": "Comptabilité et fiscalité", "documents": "Registres, garanties, tâches", "societe": "Société",
++    "reprise": "Reprise historique", "utilisateurs": "Utilisateurs", "sauvegarde": "Paramètres et sauvegarde",
++    "audit": "Journal d’audit", "imports": "Centre d’import",
++    "approbation_n1": "Approbation N1 (contrôle chantier, dépenses)",
++    "approbation_n2": "Approbation N2 (finance, rapprochement des lots)",
++    "approbation_n3": "Approbation N3 (autorisation de paiement)",
++    "approbation_dg": "Approbation DG (budgets, révisions, délégations, activation)",
++}
++NIVEAUX = {"w": "Modification", "r": "Consultation", None: "Aucun"}
++
+ ITERATIONS = 260_000
+ DUREE_SESSION = dt.timedelta(hours=12)
+ ECHECS_MAX = 5
+@@ -60,6 +80,28 @@
+ MDP_INITIAL_PAR_DEFAUT = "changez-moi"
+ 
+ 
++def droits_de(uid: int, role: str) -> dict:
++    """Droits effectifs d'un usager : le modèle de son rôle, sauf les accès réglés par l'administrateur."""
++    if role == "admin":  # la direction générale garde toujours tous les accès
++        return {m: "w" for m in MODULES}
++    base = dict(DROITS.get(role, {}))
++    perso = db.parametre(f"droits_utilisateur:{uid}")
++    if isinstance(perso, dict):
++        for m, niveau in perso.items():
++            if m in MODULES:
++                base[m] = None if niveau in (None, "x") else niveau
++    return {m: base.get(m) for m in MODULES}
++
++
++def peut(droits: dict | None, module: str) -> bool:
++    """Vrai si les droits (session ou base) donnent la modification de la rubrique."""
++    return (droits or {}).get(module) == "w"
++
++
++def personnalise(uid: int) -> bool:
++    return isinstance(db.parametre(f"droits_utilisateur:{uid}"), dict)
++
++
+ # ----------------------------------------------------------------- mots de passe
+ def hacher(mdp: str) -> str:
+     sel = os.urandom(16)
+@@ -178,7 +220,9 @@
+         c.execute(db.audit.insert().values(quand=db.maintenant(), user_id=row["id"], user_nom=row["nom"],
+                                            action="Connexion", objet="users", objet_id=str(row["id"]),
+                                            resume=f"Connexion de {row['identifiant']}"))
+-        return {k: row[k] for k in ("id", "identifiant", "nom", "role", "doit_changer_mdp")}, None
++        out = {k: row[k] for k in ("id", "identifiant", "nom", "role", "doit_changer_mdp")}
++        out["droits"] = droits_de(row["id"], row["role"])
++        return out, None
+ 
+ 
+ # --------------------------------------------------------------------- session
+@@ -217,7 +261,9 @@
+         return None
+     if not u or not u["actif"] or int(u["version_session"] or 0) != int(version):
+         return None
+-    return {k: u[k] for k in ("id", "identifiant", "nom", "role", "doit_changer_mdp")}
++    out = {k: u[k] for k in ("id", "identifiant", "nom", "role", "doit_changer_mdp")}
++    out["droits"] = droits_de(u["id"], u["role"])
++    return out
+ 
+ 
+ def utilisateur() -> dict | None:
+@@ -242,8 +288,11 @@
+ 
+ # --------------------------------------------------------------------- droits
+ def droit(module: str) -> str | None:
+-    role = (utilisateur() or {}).get("role")
+-    return DROITS.get(role, {}).get(module)
++    u = utilisateur() or {}
++    droits = u.get("droits")
++    if droits is None:  # session ouverte avant ce réglage : modèle du rôle
++        droits = DROITS.get(u.get("role"), {})
++    return droits.get(module)
+ 
+ 
+ def voit(module: str) -> bool:
+diff -ruN -x __pycache__ src/db.py src_new/db.py
+--- src/db.py	2026-10-10 11:15:30.000000000 +0100
++++ src_new/db.py	2026-10-12 13:42:46.338723279 +0100
+@@ -267,6 +267,20 @@
+     sa.Column("reason", Txt, nullable=False),
+     sa.Column("user_nom", Str(), default=""),
+ )
++pieces_jointes = sa.Table(  # documents joints aux fiches (tiers, personnel, chantiers, devis, factures) : PDF, JPEG, PNG
++    "pieces_jointes", meta,
++    sa.Column("id", Str(80), primary_key=True),
++    sa.Column("entite", Str(40), nullable=False),        # tiers, personnel, chantiers, quotes, invoices
++    sa.Column("entite_id", Str(80), nullable=False),
++    sa.Column("libelle", Str(200), default=""),
++    sa.Column("nom", Str(300), nullable=False),
++    sa.Column("mime", Str(40), nullable=False),
++    sa.Column("taille", sa.Integer, nullable=False),
++    sa.Column("sha256", Str(64), nullable=False),
++    sa.Column("contenu", sa.LargeBinary, nullable=False),
++    sa.Column("ajoute_par", sa.Integer, nullable=True),
++    sa.Column("ajoute_le", sa.DateTime, nullable=False),
++)
+ pieces = sa.Table(  # justificatifs : PDF, JPEG ou PNG
+     "pieces", meta,
+     sa.Column("id", Str(80), primary_key=True),
+diff -ruN -x __pycache__ src/gestion_v7.py src_new/gestion_v7.py
+--- src/gestion_v7.py	2026-10-11 15:40:59.000000000 +0100
++++ src_new/gestion_v7.py	2026-10-12 12:57:46.053983623 +0100
+@@ -29,13 +29,28 @@
+  '706':'Services vendus','89':'Impôts sur le résultat'}
+ DEFAULT_POLICY = {'thresholds':[70,85,95,100], 'levels':list(LEVELS), 'max_advance_days':30}
+ 
++def _exiger(u, module, message):
++    if not peut(u, module):raise ValueError(message)
++
+ def actor(roles=None):
+     u=auth.utilisateur() or {};fresh=db.un('users',u.get('id')) if u.get('id') else None
+     if not fresh or not fresh.get('actif') or fresh.get('doit_changer_mdp'):
+         raise ValueError('Une session active avec mot de passe personnel est requise.')
+     if roles and fresh['role'] not in roles:raise ValueError('Votre rôle ne permet pas cette action.')
++    fresh['droits']=auth.droits_de(fresh['id'],fresh['role'])
+     return fresh
+ 
++APPROB = {'N1': 'approbation_n1', 'N2': 'approbation_n2', 'N3': 'approbation_n3', 'DG': 'approbation_dg'}
++
++def peut(u, module):
++    """Droit d'approbation ou de gestion accordé à l'usager (rubrique réglée par l'administrateur)."""
++    return auth.peut(u.get('droits'), module)
++
++def approbateur(u):
++    """Vrai si l'usager détient au moins un niveau d'approbation (utile pour désigner un délégataire)."""
++    d = auth.droits_de(u['id'], u['role'])
++    return any(d.get(m) == 'w' for m in APPROB.values())
++
+ def amount(v, positive=False):
+     if type(v) is not int or v<0 or v>10**14 or (positive and v==0):raise ValueError('Montant invalide en centimes.')
+     return v
+@@ -119,7 +134,7 @@
+     return insert(t,'budget',code,project,p['currency'],data)
+ 
+ def approve_budget(id_,reason):
+-    u=actor(['admin'])
++    u=actor();_exiger(u,'approbation_dg','Approbation du budget réservée à la DG.')
+     with db.transaction('Approbation du budget DQE') as t:_approve_budget_tx(t,u,id_,reason)
+ 
+ def _approve_budget_tx(t,u,id_,reason):
+@@ -141,7 +156,7 @@
+         d['pending']=dict(lines=lines,forecast=forecast,revenue=revenue,creator=u['id']);event(d,u,'Révision proposée',reason);save(t,r,d)
+ 
+ def approve_revision(id_,reason):
+-    u=actor(['admin'])
++    u=actor();_exiger(u,'approbation_dg','Révision réservée à la DG.')
+     with db.transaction('Révision budgétaire autorisée') as t:
+         r=get(t,id_,'budget');d=deepcopy(r['data']);p=d.get('pending')
+         if not p or p['creator']==u['id'] or not reason.strip():raise ValueError('Révision indépendante et motif requis.')
+@@ -201,7 +216,7 @@
+     u=actor(['admin','finance','chantier']);amount(value,True);date(due)
+     with db.transaction('Modification et nouvelle validation V7') as t:
+         r=get(t,id_,'operation');d=deepcopy(r['data'])
+-        if u['id']!=d['creator'] and u['role']!='admin':raise ValueError('Seul le créateur ou la DG peut modifier.')
++        if u['id']!=d['creator'] and not peut(u,'approbation_dg'):raise ValueError('Seul le créateur ou la DG peut modifier.')
+         if d.get('payments') or d.get('cost') or d.get('order'):raise ValueError('Opération exécutée : annulation ou nouvelle demande requise.')
+         d.update(amount=value,label=label,due=due,status='Brouillon',level=0,approvals=[]);d.pop('exception',None);event(d,u,'Modification réinitialise validations');save(t,r,d)
+ 
+@@ -213,19 +228,18 @@
+         d.update(status='Soumise',level=0);event(d,u,'Soumission N1');save(t,r,d)
+ 
+ def authorized_level(u,level,project,currency,value,tx):
+-    base={'N1':('chantier','admin'),'N2':('finance','admin'),'N3':('finance','admin'),'DG':('admin',)}
+-    if u['role'] in base[level]:return True
++    if peut(u,APPROB[level]):return True
+     today=R.today()
+     return any(r['data']['user']==u['id'] and r['data']['level']==level and r['currency']==currency and
+                r['project'] in ('',project) and r['data']['start']<=today<=r['data']['end'] and value<=r['data']['limit'] and not r['data'].get('revoked') for r in records('delegation',tx))
+ 
+ def delegate(user,level,project,currency,limit,start,end,reason):
+-    u=actor(['admin']);target=db.un('users',user);date(start);date(end);amount(limit,True)
++    u=actor();_exiger(u,'approbation_dg','Délégation réservée à la DG.');target=db.un('users',user);date(start);date(end);amount(limit,True)
+     if not target or not target['actif'] or target['role'] not in ('finance','chantier','admin') or level not in LEVELS or start>end or not reason.strip():raise ValueError('Délégation invalide.')
+     with db.transaction('Délégation limitée V7') as t:return insert(t,'delegation',db.nouvel_id(),project,currency,dict(user=user,level=level,limit=limit,start=start,end=end,reason=reason,issuer=u['id']))
+ 
+ def revoke_delegate(id_,reason):
+-    u=actor(['admin'])
++    u=actor();_exiger(u,'approbation_dg','Révocation réservée à la DG.')
+     with db.transaction('Révocation délégation') as t:
+         r=get(t,id_,'delegation');d=deepcopy(r['data'])
+         if not reason.strip():raise ValueError('Motif requis.')
+@@ -397,7 +411,7 @@
+     with db.transaction('Annulation conservée V7') as t:
+         r=get(t,id_,'operation');d=deepcopy(r['data'])
+         if d.get('cost') or any(not p.get('reversed') for p in d['payments']) or not reason.strip():raise ValueError('Contrepassez les paiements ; une charge comptabilisée ne peut pas être effacée.')
+-        if d['creator']!=u['id'] and u['role']!='admin':raise ValueError('Créateur ou DG requis.')
++        if d['creator']!=u['id'] and not peut(u,'approbation_dg'):raise ValueError('Créateur ou DG requis.')
+         d['status']='Annulée';event(d,u,'Annulation',reason);save(t,r,d)
+ 
+ def reconcile(account,date_,statement,matched,reference):
+@@ -548,7 +562,7 @@
+ 
+ def _approve_carryover_tx(t,u,id_,reason):
+     r=get(t,id_,'carryover');d=deepcopy(r['data'])
+-    if u['role']!='admin':raise ValueError('Activation réservée à la DG.')
++    if not peut(u,'approbation_dg'):raise ValueError('Activation réservée à la DG.')
+     if d['creator']==u['id']:raise ValueError('La DG ne peut pas activer une reprise qu’elle a elle-même importée.')
+     if d['status']!='À approuver':raise ValueError('Reprise déjà traitée.')
+     if not reason.strip():raise ValueError('Motif d’activation obligatoire.')
+diff -ruN -x __pycache__ src/imports/service.py src_new/imports/service.py
+--- src/imports/service.py	2026-10-10 11:30:39.000000000 +0100
++++ src_new/imports/service.py	2026-10-12 12:56:12.424583733 +0100
+@@ -248,7 +248,8 @@
+ 
+ def valider_finance(lot_id: str, motif: str) -> None:
+     """Rapprochement vérifié par Finance (personne distincte de l'importateur)."""
+-    u = V.actor(["finance", "admin"])
++    u = V.actor()
++    V._exiger(u, "approbation_n2", "Validation réservée aux approbateurs Finance (N2).")
+     if not motif.strip():
+         raise ValueError("Motif / référence du rapprochement obligatoire.")
+     with db.transaction("Validation Finance d’un lot de reprise") as t:
+@@ -263,7 +264,8 @@
+ 
+ def activer(lot_id: str, motif: str) -> dict:
+     """Activation DG : approuve budgets et reliquats du lot dans une seule transaction (tout ou rien)."""
+-    u = V.actor(["admin"])
++    u = V.actor()
++    V._exiger(u, "approbation_dg", "Activation réservée à la DG.")
+     if not motif.strip():
+         raise ValueError("Motif d’activation obligatoire.")
+     with db.transaction("Activation DG d’un lot de reprise") as t:
+@@ -316,7 +318,9 @@
+ 
+ 
+ def rejeter(lot_id: str, motif: str) -> None:
+-    u = V.actor(["admin", "finance"])
++    u = V.actor()
++    if not (V.peut(u, "approbation_n2") or V.peut(u, "approbation_dg")):
++        raise ValueError("Rejet réservé aux approbateurs Finance (N2) ou à la DG.")
+     if not motif.strip():
+         raise ValueError("Motif du rejet obligatoire.")
+     with db.transaction("Rejet d’un lot de reprise") as t:
+@@ -328,14 +332,14 @@
+     return bytes(rows[0]["contenu"]) if rows and rows[0]["contenu"] is not None else None
+ 
+ 
+-def lignes_lot(lot_id: str, role: str) -> dict:
+-    """Lignes conservées d'un lot ; les champs confidentiels sont masqués hors RH et DG."""
++def lignes_lot(lot_id: str, droits: dict) -> dict:
++    """Lignes conservées d'un lot ; les champs confidentiels sont masqués sans accès à la paie."""
+     rows = db.requete("select lignes from import_lots where id = :i", i=lot_id)
+     lignes = rows[0]["lignes"] if rows else {}
+     if isinstance(lignes, str):
+         lignes = json.loads(lignes)
+     lignes = lignes or {}
+-    if role in ("admin", "rh"):
++    if droits.get("paie") in ("r", "w"):
+         return lignes
+     out = {}
+     for nom, ls in lignes.items():
+diff -ruN -x __pycache__ src/imports/validation.py src_new/imports/validation.py
+--- src/imports/validation.py	2026-10-10 11:28:51.000000000 +0100
++++ src_new/imports/validation.py	2026-10-12 12:56:12.422160042 +0100
+@@ -212,10 +212,15 @@
+         rep.erreur("Parametres", 0, "source_systeme", "300 caractères au plus.")
+ 
+ 
+-def autorise(role: str, fe: S.Feuille) -> bool:
+-    if fe.roles:
+-        return role in fe.roles and auth.DROITS.get(role, {}).get(fe.module) == "w"
+-    return auth.DROITS.get(role, {}).get(fe.module) == "w"
++def autorise(role: str, fe: S.Feuille, droits: dict | None = None) -> bool:
++    """Feuille d'import : il faut la modification de la rubrique. Les restrictions par rôle (fe.roles)
++    ne s'appliquent qu'au modèle du rôle ; une rubrique accordée expressément par l'administrateur suit ce réglage."""
++    modele = auth.DROITS.get(role, {})
++    droits = droits if droits is not None else modele
++    if droits.get(fe.module) != "w":
++        return False
++    expresse = droits.get(fe.module) != modele.get(fe.module)
++    return not fe.roles or role in fe.roles or expresse
+ 
+ 
+ def controler_droits(ds: dict, ctx: dict, rep: Rapport) -> None:
+@@ -225,10 +230,11 @@
+             continue
+         fe = S.FEUILLES[nom]
+         confidentiels = [c.nom for c in fe.champs if c.confidentiel]
+-        if confidentiels and role not in ("admin", "rh") and any(l.get(c) not in (None, "") for l in lignes for c in confidentiels):
++        droits = ctx["user"].get("droits") or auth.DROITS.get(role, {})
++        if confidentiels and not auth.peut(droits, "paie") and any(l.get(c) not in (None, "") for l in lignes for c in confidentiels):
+             rep.confidentiel_refuse = True
+-            rep.erreur(nom, 0, "", "Données de rémunération réservées aux RH et à la DG : import refusé, contenu non affiché.")
+-        if not autorise(role, fe):
++            rep.erreur(nom, 0, "", "Données de rémunération réservées aux usagers ayant accès à la paie : import refusé, contenu non affiché.")
++        if not autorise(role, fe, droits):
+             rep.erreur(nom, 0, "", "Votre rôle ne permet pas d’importer cette feuille (mêmes droits que la saisie).")
+             if fe.module in ("personnel", "paie"):
+                 rep.confidentiel_refuse = True
+diff -ruN -x __pycache__ src/migration.py src_new/migration.py
+--- src/migration.py	2026-10-11 15:40:59.000000000 +0100
++++ src_new/migration.py	2026-10-12 13:42:53.819513293 +0100
+@@ -21,6 +21,9 @@
+ METIER = ["clients", "projects", "quotes", "invoices", "expenses", "movements", "supplier_invoices", "supplier_payments",
+           "supplier_allocations", "supplier_reversals", "personnel", "attendance", "kobo_pointages", "payroll",
+           "erp_dossiers", "company_history", "history_batches", "pieces", "v7_records", "import_lots", "import_mappings"]
++# Tables facultatives : exportées si présentes ; une sauvegarde qui ne les contient pas (ancienne version) ne les
++# modifie pas, elles restent telles quelles. Elles ne rendent donc jamais une sauvegarde refusable.
++OPTIONNELLES = ["pieces_jointes"]
+ FORMAT = "bati-gestion-python-1"
+ 
+ 
+@@ -48,8 +51,8 @@
+ def export_json(avec_pieces: bool = True) -> bytes:
+     data = {"format": FORMAT, "exported_at": dt.datetime.now().isoformat(timespec="seconds"),
+             "company": R.company(), "v7_settings": {k: db.parametre(k) for k in ("v7_policy", "v7_fiscal", "imports_limites")}, "tables": {}}
+-    for t in METIER:
+-        sans = () if (avec_pieces or t != "pieces") else ("content",)
++    for t in METIER + OPTIONNELLES:
++        sans = () if (avec_pieces or t not in ("pieces", "pieces_jointes")) else ("content",)
+         data["tables"][t] = [{k: _serial(v) for k, v in r.items()} for r in db.tout(t, sans=sans)]
+     return json.dumps(data, ensure_ascii=False, indent=1).encode("utf-8")
+ 
+@@ -73,13 +76,13 @@
+ def _remplacer(tables: dict, company: dict | None, resume: str, v7_settings=None) -> dict:
+     compte = {}
+     with db.transaction(resume) as t:
+-        for nom in reversed(METIER):
++        for nom in reversed(METIER + OPTIONNELLES):
+             t.cx.execute(db.TABLES[nom].delete())
+         for cle in ("v7_policy", "v7_fiscal", "imports_limites"):
+             t.parametre(cle, (v7_settings or {}).get(cle))
+         if company:
+             t.parametre("company", company)
+-        for nom in METIER:
++        for nom in METIER + OPTIONNELLES:
+             rows = tables.get(nom) or []
+             if rows:
+                 t.cx.execute(db.TABLES[nom].insert(), rows)
+@@ -134,6 +137,12 @@
+     for nom in METIER:
+         cols = {c.name for c in db.TABLES[nom].c}
+         tables[nom] = [{k: _deserial(v) for k, v in r.items() if k in cols} for r in data["tables"][nom]]
++    for nom in OPTIONNELLES:
++        if nom in data["tables"]:
++            cols = {c.name for c in db.TABLES[nom].c}
++            tables[nom] = [{k: _deserial(v) for k, v in r.items() if k in cols} for r in data["tables"][nom]]
++        else:  # absente de l'ancienne sauvegarde : on conserve ce qui existe
++            tables[nom] = db.tout(nom)
+     return _remplacer(tables, data.get("company"), "Restauration d'une sauvegarde", data.get("v7_settings"))
+ 
+ 
+diff -ruN -x __pycache__ src/regles.py src_new/regles.py
+--- src/regles.py	2026-10-10 11:09:55.000000000 +0100
++++ src_new/regles.py	2026-10-12 13:50:48.609295968 +0100
+@@ -402,6 +402,24 @@
+     for i in s.get("supplier_invoices", []):
+         if i["date"] <= as_of and i["due"] < as_of and i["amount"] > supplier_paid(s, i["id"]):
+             alerts.append({"kind": "Facture fournisseur", "label": i["reference"], "date": i["due"], "reason": "Dette échue"})
++    for d in s.get("erp_dossiers", []):
++        if d["type"] not in AO_TYPES:
++            continue
++        v = d.get("values") or {}
++        if v.get("ao_statut") != AO_A_DEPOSER:
++            continue
++        objet = v.get("name") or d["ref"]
++        libelle = f"{d['ref']} · {objet}"
++        limite = limite_ao(d["type"], v)
++        if not is_date(limite):
++            alerts.append({"kind": "Appel d’offres", "label": libelle, "date": as_of,
++                           "reason": "Appel d’offres à déposer : date limite non renseignée"})
++        elif limite < as_of:
++            alerts.append({"kind": "Appel d’offres", "label": libelle, "date": limite,
++                           "reason": "Appel d’offres non déposé : date limite dépassée"})
++        elif limite <= limit:
++            alerts.append({"kind": "Appel d’offres", "label": libelle, "date": limite,
++                           "reason": "Appel d’offres à déposer : date limite sous 30 jours"})
+     if avec_rh:
+         for p in s.get("personnel", []):
+             end = (p.get("details") or {}).get("contractEnd", "")
+@@ -482,6 +500,25 @@
+ 
+ # ------------------------------------------------------------------ dossiers préparatoires (V7)
+ # (clé, libellé, type, obligatoire, options) ; type : text, date, money, quantity, select, link
++# Appels d’offres : suivi du dépôt sur les prospects et les contrats (alertes de dépôt et de date limite).
++AO_PAS = "Pas d’appel d’offres"
++AO_A_DEPOSER = "Appel d’offres à déposer"
++AO_DEPOSE = "Appel d’offres déposé"
++AO_STATUTS = [AO_PAS, AO_A_DEPOSER, AO_DEPOSE, "Appel d’offres retenu", "Appel d’offres non retenu"]
++AO_TYPES = ("crm", "contrats", "appels")  # dossiers soumis au suivi du dépôt
++CHAMPS_AO_APPELS = [("ao_statut", "Statut de dépôt", "select", False, AO_STATUTS),
++                    ("ao_depot", "Date de dépôt effectif", "date", False)]  # la date limite est le champ « deadline »
++
++
++def limite_ao(type_: str, v: dict):
++    """Date limite de dépôt : « deadline » pour le registre des appels d’offres, « ao_limite » ailleurs."""
++    return v.get("deadline") if type_ == "appels" else v.get("ao_limite")
++
++
++CHAMPS_AO = [("ao_statut", "Appel d’offres", "select", False, AO_STATUTS),
++             ("ao_limite", "Date limite de dépôt", "date", False),
++             ("ao_depot", "Date de dépôt effectif", "date", False)]
++
+ ERP_DOSSIERS = {
+     "conges": {"label": "Demandes de congé", "group": "RH", "fields": [
+         ("employee", "Employé", "link", True, "personnel"), ("start", "Du", "date", True), ("end", "Au", "date", True),
+@@ -503,14 +540,15 @@
+         ("name", "Prospect / opportunité", "text", True), ("contact", "Contact", "text", True),
+         ("source", "Origine", "text", False), ("owner", "Responsable commercial", "text", False),
+         ("deadline", "Prochaine échéance", "date", False), ("amount", "Montant estimé", "money", False),
+-        ("stage", "Étape", "select", True, ["Prospect", "Opportunité", "Offre", "Négociation", "Gagné", "Perdu"])]},
++        ("stage", "Étape", "select", True, ["Prospect", "Opportunité", "Offre", "Négociation", "Gagné", "Perdu"])]
++        + CHAMPS_AO},
+     "appels": {"label": "Appels d’offres", "group": "Commercial", "fields": [
+         ("name", "Objet", "text", True), ("deadline", "Date limite", "date", True), ("lots", "Lots", "text", False),
+-        ("amount", "Montant estimé", "money", False), ("owner", "Responsable", "text", False)]},
++        ("amount", "Montant estimé", "money", False), ("owner", "Responsable", "text", False)] + CHAMPS_AO_APPELS},
+     "contrats": {"label": "Contrats clients", "group": "Commercial", "analytical": True, "fields": [
+         ("name", "Objet du contrat", "text", True), ("amount", "Montant initial", "money", True),
+         ("start", "Début", "date", True), ("end", "Fin prévue", "date", False),
+-        ("terms", "Conditions de paiement", "text", False)]},
++        ("terms", "Conditions de paiement", "text", False)] + CHAMPS_AO},
+     "dqe": {"label": "Lignes DQE / budget", "group": "Projets", "analytical": True, "fields": [
+         ("name", "Désignation des travaux", "text", True), ("unit", "Unité", "text", True),
+         ("quantity", "Quantité prévue", "quantity", True), ("cost", "Prix de revient unitaire", "money", True),
+@@ -664,6 +702,12 @@
+     spec = ERP_DOSSIERS.get(r["type"])
+     if not spec:
+         raise ValueError("Type de dossier inconnu.")
++    if r["type"] in AO_TYPES:
++        v = r.get("values") or {}
++        if v.get("ao_statut") in (AO_A_DEPOSER, AO_DEPOSE) and not is_date(limite_ao(r["type"], v)):
++            raise ValueError("Indiquez la date limite de dépôt de l’appel d’offres.")
++        if v.get("ao_statut") == AO_DEPOSE and not is_date(v.get("ao_depot")):
++            raise ValueError("Indiquez la date de dépôt effectif de l’appel d’offres.")
+     if not r.get("ref", "").strip() or len(r["ref"]) > 100:
+         raise ValueError("Indiquez une référence unique (100 caractères au plus).")
+     if any(d["id"] != r["id"] and d["type"] == r["type"] and d["ref"].lower() == r["ref"].lower()
+diff -ruN -x __pycache__ src/tests/test_appels_offres.py src_new/tests/test_appels_offres.py
+--- src/tests/test_appels_offres.py	1970-01-01 01:00:00.000000000 +0100
++++ src_new/tests/test_appels_offres.py	2026-10-12 13:50:48.684443376 +0100
+@@ -0,0 +1,111 @@
++"""Appels d'offres sur prospects et contrats : règle de saisie et alertes de dépôt."""
++import unittest
++
++import regles as R
++
++
++def prospect(ref, statut=None, limite=None, depot=None, nom="Route Kasa"):
++    v = {"name": nom, "contact": "M. Test", "stage": "Prospect"}
++    if statut is not None:
++        v["ao_statut"] = statut
++    if limite is not None:
++        v["ao_limite"] = limite
++    if depot is not None:
++        v["ao_depot"] = depot
++    return {"id": ref, "type": "crm", "ref": ref, "date": "2026-10-01", "project": "", "centre": "", "party": "",
++            "currency": "USD", "status": "Brouillon", "values": v, "notes": ""}
++
++
++class RegleDeSaisie(unittest.TestCase):
++    def test_a_deposer_exige_une_date_limite(self):
++        with self.assertRaisesRegex(ValueError, "date limite"):
++            R.validate_dossier(prospect("P1", R.AO_A_DEPOSER), {})
++
++    def test_depose_exige_la_date_de_depot(self):
++        with self.assertRaisesRegex(ValueError, "dépôt effectif"):
++            R.validate_dossier(prospect("P2", R.AO_DEPOSE, limite="2026-11-01"), {})
++
++    def test_saisie_complete_acceptee(self):
++        R.validate_dossier(prospect("P3", R.AO_DEPOSE, limite="2026-11-01", depot="2026-10-20"), {})
++        R.validate_dossier(prospect("P4", R.AO_PAS), {})
++
++
++class Alertes(unittest.TestCase):
++    AUJ = "2026-10-12"
++
++    def alertes(self, *dossiers):
++        s = {"erp_dossiers": list(dossiers)}
++        return [a for a in R.erp_alerts(s, self.AUJ, avec_rh=False) if a["kind"] == "Appel d’offres"]
++
++    def test_limite_depassee_non_depose(self):
++        a = self.alertes(prospect("P1", R.AO_A_DEPOSER, limite="2026-10-05"))
++        self.assertEqual(len(a), 1)
++        self.assertIn("dépassée", a[0]["reason"])
++        self.assertEqual(a[0]["date"], "2026-10-05")
++
++    def test_limite_dans_30_jours(self):
++        a = self.alertes(prospect("P2", R.AO_A_DEPOSER, limite="2026-11-01"))
++        self.assertEqual(len(a), 1)
++        self.assertIn("sous 30 jours", a[0]["reason"])
++
++    def test_limite_lointaine_sans_alerte(self):
++        self.assertEqual(self.alertes(prospect("P3", R.AO_A_DEPOSER, limite="2027-03-01")), [])
++
++    def test_depose_ou_absent_sans_alerte(self):
++        self.assertEqual(self.alertes(prospect("P4", R.AO_DEPOSE, limite="2026-10-05", depot="2026-10-04")), [])
++        self.assertEqual(self.alertes(prospect("P5", R.AO_PAS)), [])
++        self.assertEqual(self.alertes(prospect("P6")), [])
++
++    def test_contrat_aussi_concerne(self):
++        c = prospect("C1", R.AO_A_DEPOSER, limite="2026-10-09")
++        c["type"] = "contrats"
++        c["values"] = c["values"] | {"name": "Marché voirie", "amount": 100, "start": "2026-10-01"}
++        a = self.alertes(c)
++        self.assertEqual(len(a), 1)
++        self.assertIn("Marché voirie", a[0]["label"])
++
++    def test_limite_non_renseignee_alerte_d_action(self):
++        a = self.alertes(prospect("P7", R.AO_A_DEPOSER))
++        self.assertEqual(len(a), 1)
++        self.assertIn("non renseignée", a[0]["reason"])
++
++
++class AppelsOffres(unittest.TestCase):
++    """Registre des appels d'offres : la date limite est « deadline », le statut de dépôt est partagé."""
++    AUJ = "2026-10-12"
++
++    def appel(self, ref, statut=None, deadline="2026-10-20", depot=None):
++        v = {"name": "Voirie Limete", "deadline": deadline}
++        if statut is not None:
++            v["ao_statut"] = statut
++        if depot is not None:
++            v["ao_depot"] = depot
++        return {"id": ref, "type": "appels", "ref": ref, "date": "2026-10-01", "project": "", "centre": "",
++                "party": "", "currency": "USD", "status": "Brouillon", "values": v, "notes": ""}
++
++    def alertes(self, *dossiers):
++        return [a for a in R.erp_alerts({"erp_dossiers": list(dossiers)}, self.AUJ, avec_rh=False)
++                if a["kind"] == "Appel d’offres"]
++
++    def test_alerte_limite_proche(self):
++        a = self.alertes(self.appel("A1", R.AO_A_DEPOSER, deadline="2026-10-20"))
++        self.assertEqual(len(a), 1)
++        self.assertIn("sous 30 jours", a[0]["reason"])
++
++    def test_alerte_limite_depassee(self):
++        a = self.alertes(self.appel("A2", R.AO_A_DEPOSER, deadline="2026-10-01"))
++        self.assertIn("dépassée", a[0]["reason"])
++
++    def test_depose_sans_alerte(self):
++        self.assertEqual(self.alertes(self.appel("A3", R.AO_DEPOSE, deadline="2026-10-01", depot="2026-09-30")), [])
++
++    def test_depose_exige_date_de_depot(self):
++        with self.assertRaisesRegex(ValueError, "dépôt effectif"):
++            R.validate_dossier(self.appel("A4", R.AO_DEPOSE), {})
++
++    def test_sans_statut_pas_d_alerte(self):
++        self.assertEqual(self.alertes(self.appel("A5")), [])
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff -ruN -x __pycache__ src/tests/test_droits_par_utilisateur.py src_new/tests/test_droits_par_utilisateur.py
+--- src/tests/test_droits_par_utilisateur.py	1970-01-01 01:00:00.000000000 +0100
++++ src_new/tests/test_droits_par_utilisateur.py	2026-10-12 12:58:41.972482948 +0100
+@@ -0,0 +1,149 @@
++"""Droits par utilisateur : modèle du rôle, dérogations par rubrique, retour au modèle, sessions fermées."""
++import unittest
++from unittest.mock import patch
++
++from sqlalchemy import create_engine
++from sqlalchemy.pool import StaticPool
++
++import auth
++import db
++
++
++class DroitsParUtilisateur(unittest.TestCase):
++    def setUp(self):
++        self.engine = create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool)
++        db.meta.create_all(self.engine)
++        self.p = patch.object(db, 'moteur', lambda: self.engine)
++        self.p.start()
++        self.addCleanup(self.p.stop)
++        with self.engine.begin() as c:
++            c.execute(db.users.insert().values(id=1, identifiant='admin', nom='Admin', role='admin', mdp_hash='x',
++                                               actif=True, doit_changer_mdp=False, version_session=0))
++            c.execute(db.users.insert().values(id=2, identifiant='conducteur', nom='Conducteur', role='chantier',
++                                               mdp_hash='x', actif=True, doit_changer_mdp=False, version_session=0))
++
++    def test_modele_du_role_sans_derogation(self):
++        self.assertFalse(auth.personnalise(2))
++        d = auth.droits_de(2, 'chantier')
++        self.assertEqual(d['chantiers'], 'w')
++        self.assertIsNone(d['comptabilite'])
++
++    def test_derogation_ajoute_la_comptabilite(self):
++        with db.transaction('test') as t:
++            t.parametre('droits_utilisateur:2', {'comptabilite': 'r', 'paie': 'x'}, resume='test')
++        self.assertTrue(auth.personnalise(2))
++        d = auth.droits_de(2, 'chantier')
++        self.assertEqual(d['comptabilite'], 'r')          # ajouté
++        self.assertIsNone(d['paie'])                       # retiré
++        self.assertEqual(d['chantiers'], 'w')              # inchangé
++
++    def test_admin_garde_tout(self):
++        with db.transaction('test') as t:
++            t.parametre('droits_utilisateur:1', {'comptabilite': 'x'}, resume='test')
++        self.assertTrue(all(v == 'w' for v in auth.droits_de(1, 'admin').values()))
++
++    def test_droit_utilise_les_droits_de_session(self):
++        with patch.object(auth, 'utilisateur', lambda: {'id': 2, 'role': 'chantier',
++                                                         'droits': {'comptabilite': 'w', 'chantiers': 'w'}}):
++            self.assertTrue(auth.modifie('comptabilite'))
++            self.assertIsNone(auth.droit('tresorerie'))
++
++    def test_droit_sans_droits_de_session_suit_le_role(self):
++        with patch.object(auth, 'utilisateur', lambda: {'id': 2, 'role': 'chantier'}):
++            self.assertFalse(auth.voit('comptabilite'))
++            self.assertTrue(auth.modifie('chantiers'))
++
++
++class EnregistrementDesEcarts(unittest.TestCase):
++    """Reproduit la logique de vues/utilisateurs.py : seuls les écarts avec le modèle sont gardés."""
++    def setUp(self):
++        self.engine = create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool)
++        db.meta.create_all(self.engine)
++        self.p = patch.object(db, 'moteur', lambda: self.engine)
++        self.p.start()
++        self.addCleanup(self.p.stop)
++        with self.engine.begin() as c:
++            c.execute(db.users.insert().values(id=2, identifiant='c', nom='C', role='chantier', mdp_hash='x',
++                                               actif=True, doit_changer_mdp=False, version_session=0))
++
++    def _enregistrer(self, role, droits):
++        from vues.utilisateurs import _enregistrer_droits
++        with db.transaction('test') as t:
++            _enregistrer_droits(t, 2, 'c', role, droits)
++
++    def test_identique_au_modele_ne_cree_aucune_derogation(self):
++        self._enregistrer('chantier', dict(auth.DROITS['chantier']) | {m: None for m in auth.MODULES if m not in auth.DROITS['chantier']})
++        self.assertFalse(auth.personnalise(2))
++
++    def test_ajout_d_une_rubrique_cree_une_derogation(self):
++        droits = {m: auth.DROITS['chantier'].get(m) for m in auth.MODULES}
++        droits['comptabilite'] = 'w'
++        self._enregistrer('chantier', droits)
++        self.assertTrue(auth.personnalise(2))
++        self.assertEqual(auth.droits_de(2, 'chantier')['comptabilite'], 'w')
++        self.assertEqual(db.parametre('droits_utilisateur:2'), {'comptabilite': 'w'})
++
++    def test_retour_au_modele_supprime_la_derogation(self):
++        droits = {m: auth.DROITS['chantier'].get(m) for m in auth.MODULES}
++        droits['comptabilite'] = 'w'
++        self._enregistrer('chantier', droits)
++        self._enregistrer('chantier', {m: auth.DROITS['chantier'].get(m) for m in auth.MODULES})
++        self.assertFalse(auth.personnalise(2))
++
++
++class ApprobationsEtImports(unittest.TestCase):
++    """Approbations et imports suivent les droits accordés à chaque usager."""
++    def setUp(self):
++        self.engine = create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool)
++        db.meta.create_all(self.engine)
++        self.p = patch.object(db, 'moteur', lambda: self.engine)
++        self.p.start()
++        self.addCleanup(self.p.stop)
++        with self.engine.begin() as c:
++            c.execute(db.users.insert().values(id=2, identifiant='c', nom='C', role='chantier', mdp_hash='x',
++                                               actif=True, doit_changer_mdp=False, version_session=0))
++
++    def _accorder(self, **droits):
++        with db.transaction('test') as t:
++            t.parametre('droits_utilisateur:2', droits, resume='test')
++
++    def test_approbation_n1_du_modele_chantier_puis_n2_accordee(self):
++        import gestion_v7 as V
++        u = {'id': 2, 'role': 'chantier', 'droits': auth.droits_de(2, 'chantier')}
++        self.assertTrue(V.peut(u, 'approbation_n1'))
++        self.assertFalse(V.peut(u, 'approbation_n2'))
++        self._accorder(approbation_n2='w')
++        u = {'id': 2, 'role': 'chantier', 'droits': auth.droits_de(2, 'chantier')}
++        self.assertTrue(V.peut(u, 'approbation_n2'))
++        self.assertTrue(V.approbateur(u | {'role': 'chantier'}))
++
++    def test_retrait_approbation_n1(self):
++        import gestion_v7 as V
++        self._accorder(approbation_n1='x')
++        u = {'id': 2, 'role': 'chantier', 'droits': auth.droits_de(2, 'chantier')}
++        self.assertFalse(V.peut(u, 'approbation_n1'))
++
++    def test_import_comptabilite_refuse_puis_accorde(self):
++        from imports import schema as S
++        from imports import validation as VA
++        fe = next(f for f in S.FEUILLES.values() if f.module == 'comptabilite')
++        self.assertFalse(VA.autorise('chantier', fe, auth.droits_de(2, 'chantier')))
++        self._accorder(comptabilite='w')
++        self.assertTrue(VA.autorise('chantier', fe, auth.droits_de(2, 'chantier')))
++
++    def test_import_du_modele_inchange(self):
++        from imports import schema as S
++        from imports import validation as VA
++        fe = next(f for f in S.FEUILLES.values() if f.module == 'comptabilite')
++        self.assertTrue(VA.autorise('finance', fe, auth.DROITS['finance']))
++        self.assertFalse(VA.autorise('lecteur', fe, auth.DROITS['lecteur']))
++
++    def test_donnees_de_paie_masquees_sans_acces_paie(self):
++        from imports import service as SV
++        self.assertNotIn(auth.DROITS['chantier'].get('paie'), ('r', 'w'))
++        self._accorder(paie='r')
++        self.assertEqual(auth.droits_de(2, 'chantier')['paie'], 'r')
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff -ruN -x __pycache__ src/tests/test_imports.py src_new/tests/test_imports.py
+--- src/tests/test_imports.py	2026-10-10 11:37:38.000000000 +0100
++++ src_new/tests/test_imports.py	2026-10-12 12:57:46.055819789 +0100
+@@ -248,7 +248,7 @@
+         self.assertIsNone(r["preview_id"])
+         r = self.importer("personnel", "en_cours", contenu, uid=7)        # RH
+         self.assertEqual(db.tout("personnel")[0]["salary"]["amount"], 45000)
+-        masque = SV.lignes_lot(r["lot"]["id"], "finance")["Personnel"][0]
++        masque = SV.lignes_lot(r["lot"]["id"], auth.DROITS["finance"])["Personnel"][0]
+         self.assertEqual(masque["salaire_base"], "<confidentiel>")
+ 
+ 
+@@ -270,7 +270,7 @@
+         apres = (self.count("movements"), len(V.records("entry")), V.records("budget")[0]["data"], V.balance(db.un("v7_records", a)))
+         self.assertEqual(avant, apres)
+         self.assertEqual(V.records("carryover"), [])
+-        self.assertEqual(len(SV.lignes_lot(r["lot"]["id"], "admin")["Factures_Fournisseurs"]), 1)
++        self.assertEqual(len(SV.lignes_lot(r["lot"]["id"], auth.DROITS["admin"])["Factures_Fournisseurs"]), 1)
+ 
+     def test_facture_1000_payee_600_reliquat_400_sans_redebit(self):
+         self.budget_approuve()
+diff -ruN -x __pycache__ src/tests/test_pieces_jointes.py src_new/tests/test_pieces_jointes.py
+--- src/tests/test_pieces_jointes.py	1970-01-01 01:00:00.000000000 +0100
++++ src_new/tests/test_pieces_jointes.py	2026-10-12 13:43:12.115655029 +0100
+@@ -0,0 +1,67 @@
++"""Pièces jointes aux fiches et sauvegarde : contenu conservé, anciennes sauvegardes acceptées."""
++import json
++import unittest
++from unittest.mock import patch
++
++from sqlalchemy import create_engine
++from sqlalchemy.pool import StaticPool
++
++import auth
++import db
++import migration as M
++import ui
++
++PDF = b"%PDF-1.4 test"
++
++
++class PiecesJointes(unittest.TestCase):
++    def setUp(self):
++        self.engine = create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool)
++        db.meta.create_all(self.engine)
++        p = patch.object(db, 'moteur', lambda: self.engine); p.start(); self.addCleanup(p.stop)
++        with self.engine.begin() as c:
++            c.execute(db.users.insert().values(id=1, identifiant='admin', nom='Admin', role='admin', mdp_hash='x',
++                                               actif=True, doit_changer_mdp=False, version_session=0))
++        with db.transaction('seed') as t:
++            t.inserer('clients', {'id': 'c1', 'code': 'C1', 'name': 'Client', 'roles': ['client']})
++
++    def _joindre(self, nom, contenu, entite='tiers', entite_id='c1'):
++        empreinte = __import__('hashlib').sha256(contenu).hexdigest()
++        with db.transaction(f'Document joint : {nom}') as t:
++            t.inserer('pieces_jointes', {'id': db.nouvel_id(), 'entite': entite, 'entite_id': entite_id,
++                                         'libelle': '', 'nom': nom, 'mime': ui.mime_fichier(contenu),
++                                         'taille': len(contenu), 'sha256': empreinte, 'contenu': contenu,
++                                         'ajoute_par': 1, 'ajoute_le': db.maintenant()})
++
++    def test_types_acceptes(self):
++        self.assertEqual(ui.mime_fichier(PDF), 'application/pdf')
++        self.assertEqual(ui.mime_fichier(b'\xff\xd8\xff\xe0x'), 'image/jpeg')
++        self.assertEqual(ui.mime_fichier(b'\x89PNG\r\n'), 'image/png')
++        self.assertIsNone(ui.mime_fichier(b'PK\x03\x04docx'))
++
++    def test_rattachement_a_une_fiche(self):
++        self._joindre('contrat.pdf', PDF)
++        rows = db.requete('select nom from pieces_jointes where entite = :e and entite_id = :i', e='tiers', i='c1')
++        self.assertEqual([r['nom'] for r in rows], ['contrat.pdf'])
++        self.assertEqual(db.requete('select id from pieces_jointes where entite_id = :i', i='autre'), [])
++
++    def test_sauvegarde_inclut_les_pieces_jointes(self):
++        self._joindre('contrat.pdf', PDF)
++        with patch.object(M.R, 'company', lambda: {}), patch.object(M.R, 'company_snapshot', lambda *a, **k: {}):
++            data = json.loads(M.export_json(avec_pieces=True))
++        self.assertIn('pieces_jointes', data['tables'])
++        self.assertEqual(len(data['tables']['pieces_jointes']), 1)
++
++    def test_ancienne_sauvegarde_sans_pieces_ne_les_efface_pas(self):
++        self._joindre('contrat.pdf', PDF)
++        with patch.object(M.R, 'company', lambda: {}), patch.object(M.R, 'company_snapshot', lambda *a, **k: {}):
++            data = json.loads(M.export_json(avec_pieces=True))
++        del data['tables']['pieces_jointes']        # format antérieur à cette fonctionnalité
++        M.verifier_sauvegarde(data, 'admin')        # toujours acceptée : aucune table obligatoire ajoutée
++        with patch.object(M, 'verifier_sauvegarde', lambda d, r: None):
++            M.import_json(json.dumps(data).encode('utf-8'), 'admin')
++        self.assertEqual(len(db.requete('select id from pieces_jointes')), 1)
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff -ruN -x __pycache__ src/ui.py src_new/ui.py
+--- src/ui.py	2026-10-10 11:09:55.000000000 +0100
++++ src_new/ui.py	2026-10-12 13:42:53.817389768 +0100
+@@ -58,6 +58,60 @@
+ .bg-tag{display:inline-block;background:#eaf1f8;border-radius:4px;padding:2px 8px;font-size:.82rem;margin:1px 2px}
+ .bg-tag.ok{background:#e1f5eb;color:#176846}.bg-tag.alerte{background:#fdecea;color:#a62d25}
+ :focus-visible{outline:3px solid #dc831c !important;outline-offset:2px}
++
++/* ---- Hiérarchie : titres, sous-titres, séparateurs */
++.block-container{padding-top:2.2rem;padding-bottom:3rem;max-width:1400px}
++h1{font-size:2rem;color:#112740}
++h2,h3{color:#183653;letter-spacing:-.3px}
++hr{margin:1.4rem 0;opacity:.6}
++.bg-sous{font-size:1rem;color:#4f6276;margin:-.4rem 0 1.4rem 0;max-width:820px}
++
++/* ---- Onglets : soulignement ambre sur l'onglet actif */
++[data-baseweb="tab-list"]{gap:4px;border-bottom:1px solid #d3dce6}
++[data-baseweb="tab"]{background:transparent;border-radius:8px 8px 0 0;padding:.55rem 1rem;color:#4f6276;font-weight:600}
++[data-baseweb="tab"][aria-selected="true"]{color:#112740}
++[data-baseweb="tab-highlight"]{background:#efa63a !important;height:3px !important}
++[data-baseweb="tab-border"]{display:none}
++[data-baseweb="tab"][aria-selected="true"]{font-weight:700;box-shadow:inset 0 -3px 0 #efa63a}
++
++/* ---- Boutons : principal bleu nuit, secondaire discret, arrondis cohérents */
++[data-testid^="stBaseButton"]{border-radius:8px;font-weight:600;transition:background .15s,border-color .15s,box-shadow .15s}
++[data-testid="stBaseButton-primary"]{background:#183653;border-color:#183653;color:#fff}
++[data-testid="stBaseButton-primary"]:hover{background:#112740;border-color:#112740;box-shadow:0 2px 6px rgba(17,39,64,.25)}
++[data-testid="stBaseButton-secondary"]{background:#fff;border-color:#c9d4e0;color:#183653}
++[data-testid="stBaseButton-secondary"]:hover{border-color:#183653;background:#f5f8fb}
++[data-testid="stBaseButton-secondary"]:disabled,[data-testid="stBaseButton-primary"]:disabled{opacity:.45}
++
++/* ---- Champs de saisie : bordures et focus plus nets */
++[data-baseweb="input"],[data-baseweb="select"]>div,[data-baseweb="textarea"]{border-radius:8px !important;border-color:#c9d4e0 !important}
++[data-baseweb="input"]:focus-within,[data-baseweb="select"]>div:focus-within{border-color:#183653 !important;box-shadow:0 0 0 1px #183653}
++
++/* ---- Tableaux et listes */
++[data-testid="stDataFrame"]{border:1px solid #dce4ed;border-radius:10px;overflow:hidden;background:#fff}
++[data-testid="stDataFrame"] [role="columnheader"]{background:#eef3f8;color:#172b43;font-weight:700}
++
++/* ---- Messages */
++[data-testid="stAlert"]{border-radius:10px;border:1px solid #dce4ed}
++[data-testid="stAlert"] p{font-size:.95rem}
++
++/* ---- Blocs repliables et formulaires */
++[data-testid="stExpander"]{border:1px solid #dce4ed;border-radius:10px;background:#fff;overflow:hidden}
++[data-testid="stExpander"] summary{font-weight:600;color:#183653}
++[data-testid="stForm"]{border:1px solid #dce4ed;border-radius:10px;background:#fff;padding:1rem 1.1rem}
++
++/* ---- Barre latérale : libellés de section discrets */
++[data-testid="stSidebarNavSeparator"]{margin:.9rem 0 .3rem 0}
++[data-testid="stSidebarNavSeparator"] + div{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:#8ea3b8}
++[data-testid="stSidebarNavLink"]{border-radius:8px;margin:1px 6px}
++[data-testid="stSidebarNavLink"]:hover{background:rgba(255,179,71,.09)}
++
++/* ---- Petits écrans : marges de 16 px, pas de défilement horizontal */
++@media (max-width: 760px){
++ .block-container{padding-left:16px;padding-right:16px;padding-top:1.2rem}
++ h1{font-size:1.6rem}
++ [data-testid="stHorizontalBlock"]{flex-wrap:wrap}
++ [data-testid="stMetricValue"]{font-size:1.2rem}
++}
+ </style>
+ """
+ STYLE_CONNEXION = """
+@@ -92,6 +146,78 @@
+             {"succes": st.success, "erreur": st.error, "info": st.info}[niveau](msg)
+ 
+ 
++def mime_fichier(contenu: bytes) -> str | None:
++    """Type réel du fichier, d'après son contenu (PDF, JPEG ou PNG)."""
++    if contenu[:4] == b"%PDF":
++        return "application/pdf"
++    if contenu[:3] == b"\xff\xd8\xff":
++        return "image/jpeg"
++    if contenu[:4] == b"\x89PNG":
++        return "image/png"
++    return None
++
++
++def pieces_jointes(entite: str, entite_id: str, peut_ajouter: bool, titre: str = "Documents joints") -> None:
++    """Liste les documents joints à une fiche ; ajoute ou retire selon les droits de l'usager."""
++    import hashlib
++    import re
++
++    import auth
++    import db
++
++    rows = db.requete("select id, nom, libelle, taille, mime, ajoute_par, ajoute_le from pieces_jointes "
++                      "where entite = :e and entite_id = :i order by ajoute_le", e=entite, i=entite_id)
++    with st.expander(f"{titre} ({len(rows)})", expanded=bool(rows)):
++        if not rows:
++            st.caption("Aucun document joint à cette fiche.")
++        moi = (auth.utilisateur() or {}).get("id")
++        dg = auth.droit("approbation_dg") == "w"
++        for r in rows[:50]:
++            a, b, c = st.columns([5, 2, 2])
++            a.markdown(f"**{r['nom']}**  \n{r['libelle'] or '—'}")
++            b.caption(f"{r['taille'] // 1024} Ko · {str(r['ajoute_le'])[:10]}")
++            with c:
++                contenu = db.requete("select contenu from pieces_jointes where id = :i", i=r["id"])[0]["contenu"]
++                ui.telecharger("Ouvrir", contenu, r["nom"], r["mime"], key=f"pj_dl_{r['id']}")
++                if peut_ajouter and (dg or r["ajoute_par"] == moi) and st.button("Retirer", key=f"pj_del_{r['id']}",
++                                                                                   icon=":material/delete:"):
++                    with db.transaction(f"Retrait du document {r['nom']}") as t:
++                        t.supprimer("pieces_jointes", r["id"])
++                    succes("Document retiré.")
++        if peut_ajouter:
++            with st.form(f"pj_form_{entite}_{entite_id}", clear_on_submit=True):
++                st.markdown("**Joindre un document** — PDF, JPEG ou PNG, 5 Mo au plus")
++                libelle = st.text_input("Libellé", placeholder="ex. Contrat signé, Permis, Attestation fiscale")
++                fichiers = st.file_uploader("Fichier(s)", type=["pdf", "jpg", "jpeg", "png"],
++                                            accept_multiple_files=True)
++                ok = st.form_submit_button("Joindre", type="primary")
++            if ok:
++                try:
++                    if not fichiers:
++                        raise ValueError("Choisissez au moins un fichier.")
++                    for f in fichiers:
++                        contenu = f.getvalue()
++                        if not contenu or len(contenu) > R.PIECE_MAX:
++                            raise ValueError(f"« {f.name} » : fichier vide ou plus de 5 Mo.")
++                        mime = mime_fichier(contenu)
++                        if not mime:
++                            raise ValueError(f"« {f.name} » : seuls les PDF, JPEG et PNG sont acceptés.")
++                        empreinte = hashlib.sha256(contenu).hexdigest()
++                        if db.requete("select id from pieces_jointes where entite = :e and entite_id = :i and sha256 = :h",
++                                      e=entite, i=entite_id, h=empreinte):
++                            raise ValueError(f"« {f.name} » est déjà joint à cette fiche.")
++                        nom = re.sub(r'[\\/:*?"<>|]+', "_", f.name)[:280] or "document"
++                        with db.transaction(f"Document joint : {nom}") as t:
++                            t.inserer("pieces_jointes", {"id": db.nouvel_id(), "entite": entite, "entite_id": entite_id,
++                                                        "libelle": (libelle or "").strip()[:200], "nom": nom, "mime": mime,
++                                                        "taille": len(contenu), "sha256": empreinte, "contenu": contenu,
++                                                        "ajoute_par": moi, "ajoute_le": db.maintenant()})
++                except ValueError as e:
++                    st.error(str(e))
++                else:
++                    succes("Document(s) joint(s).")
++
++
+ def succes(msg: str, rerun: bool = True) -> None:
+     st.session_state["flash_succes"] = msg
+     if rerun:
+diff -ruN -x __pycache__ src/vues/chantiers.py src_new/vues/chantiers.py
+--- src/vues/chantiers.py	2026-10-10 11:32:33.000000000 +0100
++++ src_new/vues/chantiers.py	2026-10-12 13:43:03.104040554 +0100
+@@ -111,6 +111,7 @@
+         return
+     p = next(x for x in s["projects"] if x["id"] == rows[i]["_id"])
+     st.subheader(p["name"])
++    ui.pieces_jointes("chantiers", p["id"], peut_ajouter=ecrit)
+     if ecrit and st.button("Modifier ce chantier", icon=":material/edit:"):
+         formulaire(p["id"])
+     a, b, c = st.columns(3)
+diff -ruN -x __pycache__ src/vues/devis_factures.py src_new/vues/devis_factures.py
+--- src/vues/devis_factures.py	2026-10-10 11:09:55.000000000 +0100
++++ src_new/vues/devis_factures.py	2026-10-12 14:02:58.233175696 +0100
+@@ -1,6 +1,11 @@
+-"""Devis et factures clients : prestations, impression PDF, conversion devis → facture, règlements."""
++"""Devis et factures clients : prestations, impression PDF, conversion devis → facture, règlements,
++téléchargement des factures (un PDF, ou un ZIP pour plusieurs)."""
+ from __future__ import annotations
+ 
++import io
++import re
++import zipfile
++
+ import pandas as pd
+ import streamlit as st
+ 
+@@ -41,6 +46,8 @@
+     s = R.charger("clients", "projects", "quotes", "invoices")
+     r = next((x for x in s[kind] if x["id"] == did), None) or {}
+     k = f"{kind}_{did or 'new'}"
++    # identifiant du document : celui du dossier existant, ou un identifiant réservé pour une création
++    cible = did or st.session_state.setdefault(f"df_id_{k}", db.nouvel_id())
+     st.markdown(f"#### {'Modifier' if r else 'Nouveau'} {NOMS[kind][1]}")
+     a, b = st.columns(2)
+     with a:
+@@ -92,6 +99,7 @@
+         st.error(str(e))
+         lines = None
+     st.caption("Montants dans la monnaie choisie, sans calcul automatique de taxe.")
++    ui.pieces_jointes(kind, cible, peut_ajouter=True, titre="Pièces jointes (facture, bon de commande, PV…)")
+     if st.button("Enregistrer", type="primary", key=f"df_ok_{k}"):
+         try:
+             if lines is None:
+@@ -130,10 +138,11 @@
+             else:
+                 rec["company_snapshot"] = R.company_snapshot()
+                 with db.transaction(f"Création {NOMS[kind][1]} {rec['number']}") as t:
+-                    t.inserer(kind, {"id": db.nouvel_id(), **rec})
++                    t.inserer(kind, {"id": cible, **rec})
+         except ValueError as e:
+             st.error(str(e))
+         else:
++            st.session_state.pop(f"df_id_{k}", None)  # la prochaine création recevra un nouvel identifiant
+             ui.succes("Enregistrement effectué.")
+ 
+ 
+@@ -187,6 +196,17 @@
+     ui.en_tete(titre, "Préparez et imprimez vos propositions." if kind == "quotes"
+                else "Suivez les montants facturés et les règlements.")
+     s = R.charger("clients", "projects", "quotes", "invoices")
++    if kind != "invoices":
++        _gestion(kind, s)
++        return
++    onglet_factures, onglet_telecharger = st.tabs(["Factures", "Télécharger"])
++    with onglet_factures:
++        _gestion(kind, s)
++    with onglet_telecharger:
++        _telecharger(s)
++
++
++def _gestion(kind: str, s: dict) -> None:
+     ecrit = auth.modifie("commercial")
+     if ecrit and st.button(f"Nouveau {NOMS[kind][1]}" if kind == "quotes" else "Nouvelle facture", type="primary",
+                            icon=":material/add:"):
+@@ -252,3 +272,58 @@
+                                 "Prix unitaire": R.money(l["price"], d["currency"]),
+                                 "Montant": R.money(R.js_round(float(l["qty"]) * l["price"]), d["currency"])}
+                                for l in d["lines"]]), hide_index=True, width="stretch")
++
++
++def _nom_fichier(texte: str) -> str:
++    return re.sub(r"[^\w.-]+", "_", texte).strip("_") or "facture"
++
++
++def _fichier(factures: list[dict], s: dict) -> tuple[str, bytes, str]:
++    """Un PDF pour une facture ; un ZIP de PDF pour plusieurs. Les noms en double reçoivent un suffixe."""
++    if len(factures) == 1:
++        d = factures[0]
++        return f"{_nom_fichier(d['number'])}.pdf", document_pdf("invoices", d, s), ui.MIME_PDF
++    buf = io.BytesIO()
++    vus: set[str] = set()
++    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
++        for d in factures:
++            base = _nom_fichier(d["number"])
++            nom, n = f"{base}.pdf", 2
++            while nom in vus:
++                nom = f"{base}_{n}.pdf"
++                n += 1
++            vus.add(nom)
++            z.writestr(nom, document_pdf("invoices", d, s))
++    return f"factures_{R.today()}.zip", buf.getvalue(), "application/zip"
++
++
++def _telecharger(s: dict) -> None:
++    st.caption("Choisissez une facture (PDF) ou plusieurs (un fichier ZIP de PDF).")
++    factures = sorted(s["invoices"], key=lambda d: (d["date"], d["number"]), reverse=True)
++    if not factures:
++        st.info("Aucune facture à télécharger pour le moment.")
++        return
++    libelles = {d["id"]: f"{d['number']} · {R.client_name(s, d['client'])} · {d['date']} · "
++                         f"{R.money(R.total(d), d['currency'])}" for d in factures}
++    if st.checkbox("Toutes les factures", key="dl_tout"):
++        ids = list(libelles)
++        st.caption(f"{len(ids)} facture(s) seront téléchargées.")
++    else:
++        ids = st.multiselect("Factures à télécharger", list(libelles), format_func=libelles.get, key="dl_choix")
++    if not ids:
++        st.caption("Sélectionnez au moins une facture.")
++        return
++    if len(ids) > 200:
++        st.warning("Maximum 200 factures par téléchargement : affinez la sélection.")
++        return
++    cle = tuple(sorted(ids))
++    if st.button("Préparer le PDF" if len(ids) == 1 else "Préparer le fichier ZIP", type="primary",
++                 icon=":material/download:", key="dl_prep"):
++        choisies = [d for d in factures if d["id"] in ids]
++        st.session_state["dl_pret"] = (cle, _fichier(choisies, s))
++    pret = st.session_state.get("dl_pret")
++    if pret and pret[0] == cle:  # le fichier préparé ne s'affiche que pour la sélection courante
++        nom, data, mime = pret[1]
++        ui.telecharger("Télécharger", data, nom, mime, key=f"dl_fichier_{hash(cle)}", principal=True)
++    else:
++        st.caption("Cliquez sur « Préparer » pour générer le fichier de la sélection.")
+diff -ruN -x __pycache__ src/vues/dossiers.py src_new/vues/dossiers.py
+--- src/vues/dossiers.py	2026-10-10 11:09:55.000000000 +0100
++++ src_new/vues/dossiers.py	2026-10-12 13:50:48.612118668 +0100
+@@ -94,6 +94,15 @@
+             ui.succes("Dossier préparatoire enregistré.")
+ 
+ 
++def _ao_resume(d: dict) -> str:
++    v = d.get("values") or {}
++    statut = v.get("ao_statut") or R.AO_PAS
++    limite = R.limite_ao(d["type"], v)
++    if statut in (R.AO_A_DEPOSER, R.AO_DEPOSE) and R.is_date(limite):
++        return f"{statut} · limite {limite}"
++    return statut
++
++
+ def page_espace(cle: str) -> None:
+     titre, types = R.V7_SPACES[cle]
+     module = module_de(types[0])
+@@ -119,19 +128,26 @@
+         st.info("Aucun dossier saisi. Ajoutez une première fiche.")
+         return
+     premier = next((R.field_spec(f)[0] for f in spec["fields"] if R.field_spec(f)[2] in ("text", "link")), None)
++    avec_ao = type_ in R.AO_TYPES
+     lignes = [{"_id": d["id"], "ref": d["ref"], "date": d["date"],
+                "obj": R.dossier_value(s, d, next(f for f in spec["fields"] if f[0] == premier)) if premier else "",
+                "ch": R.project_name(s, d["project"]) if d["project"] else
+                next((c["ref"] for c in s["erp_dossiers"] if c["id"] == d["centre"]), "—"),
+-               "st": "Brouillon"} for d in rows]
+-    i = ui.tableau(lignes, {"ref": "Référence", "date": "Date", "obj": next((R.field_spec(f)[1] for f in spec["fields"]
+-                                                                          if f[0] == premier), "Objet"),
+-                            "ch": "Chantier / centre", "st": "Statut"}, key=f"tab_{cle}_{type_}", selection=True)
++               "st": "Brouillon",
++               **({"ao": _ao_resume(d)} if avec_ao else {})} for d in rows]
++    colonnes = {"ref": "Référence", "date": "Date", "obj": next((R.field_spec(f)[1] for f in spec["fields"]
++                                                               if f[0] == premier), "Objet"),
++                "ch": "Chantier / centre", "st": "Statut"}
++    if avec_ao:
++        colonnes["ao"] = "Appel d’offres"
++    i = ui.tableau(lignes, colonnes, key=f"tab_{cle}_{type_}", selection=True)
+     if i is None:
+         st.caption("Sélectionnez un dossier pour l’ouvrir, le modifier ou l’exporter.")
+         return
+     d = next(x for x in rows if x["id"] == lignes[i]["_id"])
+     st.subheader(f"{spec['label']} · {d['ref']}")
++    if type_ in R.AO_TYPES:  # prospects, contrats et appels d’offres : pièces jointes (appel, offre, contrat signé)
++        ui.pieces_jointes("dossier", d["id"], peut_ajouter=ecrit)
+     c1, c2, c3 = ui.rangee(3)
+     if ecrit and c1.button("Modifier", icon=":material/edit:", key=f"mod_{d['id']}"):
+         formulaire(type_, d["id"])
+diff -ruN -x __pycache__ src/vues/imports.py src_new/vues/imports.py
+--- src/vues/imports.py	2026-10-10 11:36:58.000000000 +0100
++++ src_new/vues/imports.py	2026-10-12 12:56:12.426083475 +0100
+@@ -29,12 +29,16 @@
+     return (auth.utilisateur() or {}).get("role", "")
+ 
+ 
++def _droits() -> dict:
++    return (auth.utilisateur() or {}).get("droits") or auth.DROITS.get(_role(), {})
++
++
+ def fonctions_permises(role: str, parmi: list[str] | None = None) -> list[str]:
+     out = []
+     for cle, f in S.FONCTIONS.items():
+         if parmi and cle not in parmi:
+             continue
+-        if any(VA.autorise(role, S.FEUILLES[n]) for n in f.feuilles):
++        if any(VA.autorise(role, S.FEUILLES[n], (auth.utilisateur() or {}).get('droits')) for n in f.feuilles):
+             out.append(cle)
+     return out
+ 
+@@ -44,7 +48,7 @@
+     modes = set()
+     for n in f.feuilles:
+         fe = S.FEUILLES[n]
+-        if VA.autorise(role, fe):
++        if VA.autorise(role, fe, (auth.utilisateur() or {}).get('droits')):
+             modes |= set(fe.modes)
+     return [m for m in S.MODES if m in modes]
+ 
+@@ -214,25 +218,26 @@
+         ui.tableau([{**r, "montant": _montant(r["montant"], r["devise"]), "reste": _montant(r["reste"], r["devise"])} for r in rel],
+                    {"ref": "Référence", "type": "Nature", "devise": "Devise", "montant": "Montant repris", "reste": "Reste",
+                     "statut": "Statut"}, key=f"rel_{l['id']}")
+-    lignes = SV.lignes_lot(l["id"], _role())
++    lignes = SV.lignes_lot(l["id"], _droits())
+     if lignes:
+         feuilles = [n for n, v in lignes.items() if v]
+         if feuilles:
+             fe = st.pills("Lignes conservées", feuilles, default=feuilles[0], key=f"pl_{l['id']}") or feuilles[0]
+             ui.tableau([{k: v for k, v in r.items()} for r in lignes[fe][:2000]],
+                        {k: k for k in (["__line"] + S.FEUILLES[fe].colonnes)}, key=f"li_{l['id']}_{fe}")
+-    role, uid = _role(), (auth.utilisateur() or {}).get("id")
+-    if l["statut"] not in SV.STATUTS_PREPARES or role not in ("finance", "admin"):
++    uid, dr = (auth.utilisateur() or {}).get("id"), _droits()
++    n2, dg = auth.peut(dr, "approbation_n2"), auth.peut(dr, "approbation_dg")
++    if l["statut"] not in SV.STATUTS_PREPARES or not (n2 or dg):
+         return
+     motif = st.text_input("Motif / référence du rapprochement", key=f"motif_{l['id']}")
+     c = ui.rangee(3)
+-    if l["statut"] == "Préparé" and role in ("finance", "admin") and uid != l["cree_par"]:
++    if l["statut"] == "Préparé" and n2 and uid != l["cree_par"]:
+         if c[0].button("Valider (Finance)", key=f"vf_{l['id']}", type="primary"):
+             _executer(SV.valider_finance, l["id"], motif, ok="Lot validé par Finance.")
+-    if l["statut"] == "Validé Finance" and role == "admin":
++    if l["statut"] == "Validé Finance" and dg:
+         if c[1].button("Activer (DG)", key=f"act_{l['id']}", type="primary"):
+             _executer(SV.activer, l["id"], motif, ok="Lot activé : budgets, soldes et reliquats sont désormais effectifs.")
+-    if l["statut"] in SV.STATUTS_PREPARES and role in ("finance", "admin"):
++    if l["statut"] in SV.STATUTS_PREPARES and (n2 or dg):
+         if c[2].button("Rejeter le lot", key=f"rej_{l['id']}"):
+             _executer(SV.rejeter, l["id"], motif, ok="Lot rejeté : aucune donnée exécutée n’a été supprimée.")
+ 
+diff -ruN -x __pycache__ src/vues/memo_v7.py src_new/vues/memo_v7.py
+--- src/vues/memo_v7.py	2026-10-10 11:32:33.000000000 +0100
++++ src_new/vues/memo_v7.py	2026-10-12 12:57:46.054652818 +0100
+@@ -49,7 +49,7 @@
+     st.write(f"Avances à régulariser : {R.money(m['advance'],currency)} · Prévision à terminaison : {R.money(m['forecast'],currency)} · Marge finale : {R.money(m['final_margin'],currency)}")
+     legacy=[e for e in db.tout('expenses') if e['project']==b['project']]
+     if legacy:st.warning('Des dépenses historiques existent sur ce chantier. Elles doivent être rapprochées et reprises avant de considérer le budget V7 comme exhaustif.')
+-    if (auth.utilisateur() or {}).get('role')=='admin':
++    if auth.droit('approbation_dg')=='w':
+         with st.form('approve_budget'):
+             reason=st.text_input('Motif de validation du budget')
+             if st.form_submit_button('Approuver le budget',disabled=b['data']['status']=='Approuvé'):execute(V.approve_budget,b['id'],reason)
+@@ -65,7 +65,7 @@
+                 else:execute(V.revise_budget,b['id'],lines,R.cents(f),R.cents(revenue),reason)
+         if b['data'].get('pending'):
+             table(b['data']['pending']['lines'])
+-            if (auth.utilisateur() or {}).get('role')=='admin':
++            if auth.droit('approbation_dg')=='w':
+                 with st.form('v7_revision_ok'):
+                     reason=st.text_input('Motif d’autorisation DG de la révision')
+                     if st.form_submit_button('Autoriser la révision'):execute(V.approve_revision,b['id'],reason)
+diff -ruN -x __pycache__ src/vues/personnel.py src_new/vues/personnel.py
+--- src/vues/personnel.py	2026-10-10 11:32:33.000000000 +0100
++++ src_new/vues/personnel.py	2026-10-12 13:43:03.103579717 +0100
+@@ -276,6 +276,7 @@
+     if i is not None:
+         p = next(x for x in staff if x["id"] == rows[i]["_id"])
+         st.subheader(p["name"])
++        ui.pieces_jointes("personnel", p["id"], peut_ajouter=auth.modifie("personnel"))
+         c = ui.rangee(5)
+         if ecrit and c[0].button("Modifier", icon=":material/edit:"):
+             formulaire(p["id"])
+diff -ruN -x __pycache__ src/vues/tiers.py src_new/vues/tiers.py
+--- src/vues/tiers.py	2026-10-10 11:32:33.000000000 +0100
++++ src_new/vues/tiers.py	2026-10-12 13:43:03.102850663 +0100
+@@ -92,6 +92,7 @@
+         return
+     p = next(x for x in s["clients"] if x["id"] == rows[i]["_id"])
+     st.subheader(p["name"])
++    ui.pieces_jointes("tiers", p["id"], peut_ajouter=ecrit)
+     cols = ui.rangee(4)
+     if ecrit and cols[0].button("Modifier", icon=":material/edit:"):
+         formulaire(p["id"])
+diff -ruN -x __pycache__ src/vues/utilisateurs.py src_new/vues/utilisateurs.py
+--- src/vues/utilisateurs.py	2026-10-10 11:09:55.000000000 +0100
++++ src_new/vues/utilisateurs.py	2026-10-12 12:58:49.540093249 +0100
+@@ -1,4 +1,4 @@
+-"""Comptes des usagers : identifiants, rôles, désactivation, réinitialisation des mots de passe."""
++"""Comptes des usagers : identifiants, modèle de rôle, accès rubrique par rubrique, désactivation, mots de passe."""
+ from __future__ import annotations
+ 
+ import re
+@@ -9,6 +9,10 @@
+ import db
+ import ui
+ 
++NIVEAUX = ["Aucun", "Consultation", "Modification"]
++CODE_NIVEAU = {"Aucun": None, "Consultation": "r", "Modification": "w"}
++INDEX_NIVEAU = {None: 0, "r": 1, "w": 2}
++
+ 
+ def _identifiants(identifiant: str, mdp: str, nom: str) -> None:
+     st.success(f"Identifiants de **{nom}** — à lui transmettre personnellement :")
+@@ -17,21 +21,54 @@
+     st.caption("Ce mot de passe ne sera plus affiché. L'usager devra en choisir un nouveau à sa première connexion.")
+ 
+ 
++def _matrice(prefixe: str, role: str, actuels: dict | None, desactive: bool = False) -> dict:
++    """Une ligne par rubrique : Aucun, Consultation ou Modification. Renvoie {rubrique: 'w' | 'r' | None}."""
++    if role == "admin":
++        st.info("La direction générale garde tous les accès ; ce réglage ne s’applique pas.")
++        return {m: "w" for m in auth.MODULES}
++    base = actuels if actuels is not None else {m: auth.DROITS.get(role, {}).get(m) for m in auth.MODULES}
++    out = {}
++    for m in auth.MODULES:
++        a, b = st.columns([3, 4])
++        a.markdown(auth.MODULE_LABELS.get(m, m))
++        approbation = m.startswith("approbation_")  # une approbation s'accorde ou se retire, sans simple consultation
++        options = ["Aucun", "Modification"] if approbation else NIVEAUX
++        niveau = base.get(m) if not (approbation and base.get(m) == "r") else None
++        choix = b.radio(auth.MODULE_LABELS.get(m, m), options, index=options.index(
++                        {None: "Aucun", "r": "Consultation", "w": "Modification"}[niveau]),
++                        horizontal=True, key=f"{prefixe}_{role}_{m}", label_visibility="collapsed", disabled=desactive)
++        out[m] = CODE_NIVEAU[choix]
++    return out
++
++
++def _enregistrer_droits(t, uid: int, identifiant: str, role: str, droits: dict) -> None:
++    """Ne garde que les écarts avec le modèle du rôle ; sans écart, le compte revient au modèle."""
++    cle = f"droits_utilisateur:{uid}"
++    modele = auth.DROITS.get(role, {})
++    ecart = {m: (v or "x") for m, v in droits.items() if v != modele.get(m)} or None
++    if (db.parametre(cle) or None) == ecart:
++        return
++    t.parametre(cle, ecart, resume=f"Accès aux rubriques de {identifiant}")
++
++
+ def page() -> None:
+     auth.exiger("utilisateurs")
+-    ui.en_tete("Utilisateurs", "Créer les identifiants et attribuer les rôles.")
++    ui.en_tete("Utilisateurs", "Créer les comptes, choisir le modèle de départ puis régler les accès rubrique par rubrique.")
+     if info := st.session_state.pop("identifiants_crees", None):
+         _identifiants(*info)
+     with st.expander("Nouvel utilisateur", icon=":material/person_add:"):
++        role = st.selectbox("Modèle de départ (rôle)", list(auth.ROLES), format_func=auth.ROLES.get, index=3,
++                            key="nu_role", help="Pré-remplit les accès ci-dessous ; vous pouvez ensuite les modifier.")
++        st.markdown("\n".join(f"- **{auth.ROLES[r]}** : {d}" for r, d in auth.DESCRIPTION_ROLES.items()))
+         with st.form("nouvel_utilisateur", clear_on_submit=True):
+             a, b = st.columns(2)
+             nom = a.text_input("Nom complet *")
+             ident = b.text_input("Identifiant de connexion *", placeholder="ex. j.mukendi",
+                                  help="Lettres minuscules, chiffres, point, tiret ou soulignement.")
+             tel = a.text_input("Téléphone")
+-            role = b.selectbox("Rôle", list(auth.ROLES), format_func=auth.ROLES.get, index=3)
++            st.markdown("**Accès aux rubriques**")
++            droits_nouveaux = _matrice("nu", role, None)
+             ok = st.form_submit_button("Créer le compte", type="primary")
+-        st.markdown("\n".join(f"- **{auth.ROLES[r]}** : {d}" for r, d in auth.DESCRIPTION_ROLES.items()))
+         if ok:
+             ident_n = ident.strip().lower()
+             if not nom.strip() or not ident_n:
+@@ -42,40 +79,67 @@
+                 st.error("Cet identifiant existe déjà.")
+             else:
+                 mdp = auth.creer_utilisateur(ident_n, nom, role, tel)
++                uid = db.requete("select id from users where identifiant = :i", i=ident_n)[0]["id"]
++                if role != "admin":
++                    with db.transaction(f"Accès initiaux de {ident_n}") as t:
++                        _enregistrer_droits(t, uid, ident_n, role, droits_nouveaux)
+                 st.session_state["identifiants_crees"] = (ident_n, mdp, nom.strip())
+                 st.rerun()
+ 
+     us = sorted(db.tout("users", sans=("mdp_hash",)), key=lambda u: (not u["actif"], u["nom"].lower()))
+     rows = [{"_id": u["id"], "nom": u["nom"], "id": u["identifiant"], "role": auth.ROLES.get(u["role"], u["role"]),
++             "acces": "Personnalisés" if auth.personnalise(u["id"]) else "Modèle du rôle",
+              "tel": u["telephone"], "actif": bool(u["actif"]), "der": u["derniere_connexion"]} for u in us]
+-    i = ui.tableau(rows, {"nom": "Nom", "id": "Identifiant", "role": "Rôle", "tel": "Téléphone",
+-                          "actif": st.column_config.CheckboxColumn("Actif"),
++    i = ui.tableau(rows, {"nom": "Nom", "id": "Identifiant", "role": "Modèle de départ", "acces": "Accès",
++                          "tel": "Téléphone", "actif": st.column_config.CheckboxColumn("Actif"),
+                           "der": st.column_config.DatetimeColumn("Dernière connexion", format="DD/MM/YYYY HH:mm")},
+                    key="tab_users", selection=True)
+     if i is None:
+-        st.caption("Sélectionnez un compte pour le modifier, le désactiver ou réinitialiser son mot de passe.")
++        st.caption("Sélectionnez un compte pour modifier ses accès, le désactiver ou réinitialiser son mot de passe.")
+         return
+     u = next(x for x in us if x["id"] == rows[i]["_id"])
+     moi = auth.utilisateur()["id"]
+     st.subheader(f"{u['nom']} ({u['identifiant']})")
++    roles = list(auth.ROLES)
++    role_m = st.selectbox("Modèle de départ (rôle)", roles, index=roles.index(u["role"]), format_func=auth.ROLES.get,
++                          disabled=u["id"] == moi, key=f"mod_role_{u['id']}",
++                          help="Changer le rôle remet les accès au modèle de ce rôle ; vous pouvez ensuite les ajuster.")
++    anciens = auth.droits_de(u["id"], u["role"])
+     with st.form(f"modif_{u['id']}"):
+         a, b = st.columns(2)
+         nom = a.text_input("Nom complet", value=u["nom"])
+         tel = b.text_input("Téléphone", value=u["telephone"] or "")
+-        roles = list(auth.ROLES)
+-        role = a.selectbox("Rôle", roles, index=roles.index(u["role"]), format_func=auth.ROLES.get, disabled=u["id"] == moi)
+         actif = b.toggle("Compte actif", value=bool(u["actif"]), disabled=u["id"] == moi,
+                          help="Un compte désactivé ne peut plus se connecter ; son historique est conservé.")
++        st.markdown("**Accès aux rubriques**" + ("" if auth.personnalise(u["id"]) or role_m != u["role"]
++                                                 else " — modèle du rôle, non modifié"))
++        actuels = anciens if role_m == u["role"] else None
++        droits = _matrice(f"mod{u['id']}", role_m, actuels, desactive=u["id"] == moi)
+         ok = st.form_submit_button("Enregistrer les modifications", type="primary")
+     if ok:
+         vals = {"nom": nom.strip() or u["nom"], "telephone": tel.strip()}
++        novelles = None
+         if u["id"] != moi:
+-            vals.update(role=role, actif=actif)
+-            if role != u["role"] or not actif:
+-                vals["version_session"] = int(u["version_session"] or 0) + 1  # ferme ses sessions ouvertes
++            vals.update(role=role_m, actif=actif)
++            if role_m != "admin":
++                novelles = droits
++        bascule = u["id"] != moi and (role_m != u["role"] or not actif
++                                      or (novelles is not None and novelles != anciens))
+         with db.transaction(f"Modification du compte {u['identifiant']}") as t:
++            if bascule:  # ferme les sessions ouvertes : les nouveaux accès s'appliquent tout de suite
++                vals["version_session"] = int(u["version_session"] or 0) + 1
+             t.maj("users", u["id"], vals)
++            if novelles is not None:
++                _enregistrer_droits(t, u["id"], u["identifiant"], role_m, novelles)
+         ui.succes("Compte mis à jour.")
++        st.rerun()
++    if auth.personnalise(u["id"]) and u["id"] != moi:
++        if st.button("Revenir au modèle du rôle", icon=":material/restart_alt:",
++                     help="Supprime les accès personnalisés : le compte reprend les accès de son rôle."):
++            with db.transaction(f"Retour au modèle du rôle pour {u['identifiant']}") as t:
++                t.parametre(f"droits_utilisateur:{u['id']}", None, resume=f"Retour au modèle du rôle : {u['identifiant']}")
++                t.maj("users", u["id"], {"version_session": int(u["version_session"] or 0) + 1})
++            st.rerun()
+     if st.button("Réinitialiser le mot de passe", icon=":material/lock_reset:", disabled=u["id"] == moi,
+                  help="Pour votre propre compte, utilisez « Mon compte »."):
+         mdp = auth.reinitialiser_mdp(u["id"])
