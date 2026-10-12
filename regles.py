@@ -402,6 +402,24 @@ def erp_alerts(s: dict, as_of: str, avec_rh: bool = True) -> list[dict]:
     for i in s.get("supplier_invoices", []):
         if i["date"] <= as_of and i["due"] < as_of and i["amount"] > supplier_paid(s, i["id"]):
             alerts.append({"kind": "Facture fournisseur", "label": i["reference"], "date": i["due"], "reason": "Dette échue"})
+    for d in s.get("erp_dossiers", []):
+        if d["type"] not in AO_TYPES:
+            continue
+        v = d.get("values") or {}
+        if v.get("ao_statut") != AO_A_DEPOSER:
+            continue
+        objet = v.get("name") or d["ref"]
+        libelle = f"{d['ref']} · {objet}"
+        limite = limite_ao(d["type"], v)
+        if not is_date(limite):
+            alerts.append({"kind": "Appel d’offres", "label": libelle, "date": as_of,
+                           "reason": "Appel d’offres à déposer : date limite non renseignée"})
+        elif limite < as_of:
+            alerts.append({"kind": "Appel d’offres", "label": libelle, "date": limite,
+                           "reason": "Appel d’offres non déposé : date limite dépassée"})
+        elif limite <= limit:
+            alerts.append({"kind": "Appel d’offres", "label": libelle, "date": limite,
+                           "reason": "Appel d’offres à déposer : date limite sous 30 jours"})
     if avec_rh:
         for p in s.get("personnel", []):
             end = (p.get("details") or {}).get("contractEnd", "")
@@ -482,6 +500,25 @@ def seniority_months(month: str, start: str) -> int:
 
 # ------------------------------------------------------------------ dossiers préparatoires (V7)
 # (clé, libellé, type, obligatoire, options) ; type : text, date, money, quantity, select, link
+# Appels d’offres : suivi du dépôt sur les prospects et les contrats (alertes de dépôt et de date limite).
+AO_PAS = "Pas d’appel d’offres"
+AO_A_DEPOSER = "Appel d’offres à déposer"
+AO_DEPOSE = "Appel d’offres déposé"
+AO_STATUTS = [AO_PAS, AO_A_DEPOSER, AO_DEPOSE, "Appel d’offres retenu", "Appel d’offres non retenu"]
+AO_TYPES = ("crm", "contrats", "appels")  # dossiers soumis au suivi du dépôt
+CHAMPS_AO_APPELS = [("ao_statut", "Statut de dépôt", "select", False, AO_STATUTS),
+                    ("ao_depot", "Date de dépôt effectif", "date", False)]  # la date limite est le champ « deadline »
+
+
+def limite_ao(type_: str, v: dict):
+    """Date limite de dépôt : « deadline » pour le registre des appels d’offres, « ao_limite » ailleurs."""
+    return v.get("deadline") if type_ == "appels" else v.get("ao_limite")
+
+
+CHAMPS_AO = [("ao_statut", "Appel d’offres", "select", False, AO_STATUTS),
+             ("ao_limite", "Date limite de dépôt", "date", False),
+             ("ao_depot", "Date de dépôt effectif", "date", False)]
+
 ERP_DOSSIERS = {
     "conges": {"label": "Demandes de congé", "group": "RH", "fields": [
         ("employee", "Employé", "link", True, "personnel"), ("start", "Du", "date", True), ("end", "Au", "date", True),
@@ -503,14 +540,15 @@ ERP_DOSSIERS = {
         ("name", "Prospect / opportunité", "text", True), ("contact", "Contact", "text", True),
         ("source", "Origine", "text", False), ("owner", "Responsable commercial", "text", False),
         ("deadline", "Prochaine échéance", "date", False), ("amount", "Montant estimé", "money", False),
-        ("stage", "Étape", "select", True, ["Prospect", "Opportunité", "Offre", "Négociation", "Gagné", "Perdu"])]},
+        ("stage", "Étape", "select", True, ["Prospect", "Opportunité", "Offre", "Négociation", "Gagné", "Perdu"])]
+        + CHAMPS_AO},
     "appels": {"label": "Appels d’offres", "group": "Commercial", "fields": [
         ("name", "Objet", "text", True), ("deadline", "Date limite", "date", True), ("lots", "Lots", "text", False),
-        ("amount", "Montant estimé", "money", False), ("owner", "Responsable", "text", False)]},
+        ("amount", "Montant estimé", "money", False), ("owner", "Responsable", "text", False)] + CHAMPS_AO_APPELS},
     "contrats": {"label": "Contrats clients", "group": "Commercial", "analytical": True, "fields": [
         ("name", "Objet du contrat", "text", True), ("amount", "Montant initial", "money", True),
         ("start", "Début", "date", True), ("end", "Fin prévue", "date", False),
-        ("terms", "Conditions de paiement", "text", False)]},
+        ("terms", "Conditions de paiement", "text", False)] + CHAMPS_AO},
     "dqe": {"label": "Lignes DQE / budget", "group": "Projets", "analytical": True, "fields": [
         ("name", "Désignation des travaux", "text", True), ("unit", "Unité", "text", True),
         ("quantity", "Quantité prévue", "quantity", True), ("cost", "Prix de revient unitaire", "money", True),
@@ -664,6 +702,12 @@ def validate_dossier(r: dict, s: dict) -> None:
     spec = ERP_DOSSIERS.get(r["type"])
     if not spec:
         raise ValueError("Type de dossier inconnu.")
+    if r["type"] in AO_TYPES:
+        v = r.get("values") or {}
+        if v.get("ao_statut") in (AO_A_DEPOSER, AO_DEPOSE) and not is_date(limite_ao(r["type"], v)):
+            raise ValueError("Indiquez la date limite de dépôt de l’appel d’offres.")
+        if v.get("ao_statut") == AO_DEPOSE and not is_date(v.get("ao_depot")):
+            raise ValueError("Indiquez la date de dépôt effectif de l’appel d’offres.")
     if not r.get("ref", "").strip() or len(r["ref"]) > 100:
         raise ValueError("Indiquez une référence unique (100 caractères au plus).")
     if any(d["id"] != r["id"] and d["type"] == r["type"] and d["ref"].lower() == r["ref"].lower()

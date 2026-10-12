@@ -267,6 +267,20 @@ company_history = sa.Table(
     sa.Column("reason", Txt, nullable=False),
     sa.Column("user_nom", Str(), default=""),
 )
+pieces_jointes = sa.Table(  # documents joints aux fiches (tiers, personnel, chantiers, devis, factures) : PDF, JPEG, PNG
+    "pieces_jointes", meta,
+    sa.Column("id", Str(80), primary_key=True),
+    sa.Column("entite", Str(40), nullable=False),        # tiers, personnel, chantiers, quotes, invoices
+    sa.Column("entite_id", Str(80), nullable=False),
+    sa.Column("libelle", Str(200), default=""),
+    sa.Column("nom", Str(300), nullable=False),
+    sa.Column("mime", Str(40), nullable=False),
+    sa.Column("taille", sa.Integer, nullable=False),
+    sa.Column("sha256", Str(64), nullable=False),
+    sa.Column("contenu", sa.LargeBinary, nullable=False),
+    sa.Column("ajoute_par", sa.Integer, nullable=True),
+    sa.Column("ajoute_le", sa.DateTime, nullable=False),
+)
 pieces = sa.Table(  # justificatifs : PDF, JPEG ou PNG
     "pieces", meta,
     sa.Column("id", Str(80), primary_key=True),

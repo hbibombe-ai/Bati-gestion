@@ -276,6 +276,7 @@ def page() -> None:
     if i is not None:
         p = next(x for x in staff if x["id"] == rows[i]["_id"])
         st.subheader(p["name"])
+        ui.pieces_jointes("personnel", p["id"], peut_ajouter=auth.modifie("personnel"))
         c = ui.rangee(5)
         if ecrit and c[0].button("Modifier", icon=":material/edit:"):
             formulaire(p["id"])

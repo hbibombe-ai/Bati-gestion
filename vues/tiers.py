@@ -92,6 +92,7 @@ def page() -> None:
         return
     p = next(x for x in s["clients"] if x["id"] == rows[i]["_id"])
     st.subheader(p["name"])
+    ui.pieces_jointes("tiers", p["id"], peut_ajouter=ecrit)
     cols = ui.rangee(4)
     if ecrit and cols[0].button("Modifier", icon=":material/edit:"):
         formulaire(p["id"])

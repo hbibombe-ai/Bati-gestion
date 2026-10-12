@@ -21,6 +21,9 @@ import regles as R
 METIER = ["clients", "projects", "quotes", "invoices", "expenses", "movements", "supplier_invoices", "supplier_payments",
           "supplier_allocations", "supplier_reversals", "personnel", "attendance", "kobo_pointages", "payroll",
           "erp_dossiers", "company_history", "history_batches", "pieces", "v7_records", "import_lots", "import_mappings"]
+# Tables facultatives : exportées si présentes ; une sauvegarde qui ne les contient pas (ancienne version) ne les
+# modifie pas, elles restent telles quelles. Elles ne rendent donc jamais une sauvegarde refusable.
+OPTIONNELLES = ["pieces_jointes"]
 FORMAT = "bati-gestion-python-1"
 
 
@@ -48,8 +51,8 @@ def _deserial(v):
 def export_json(avec_pieces: bool = True) -> bytes:
     data = {"format": FORMAT, "exported_at": dt.datetime.now().isoformat(timespec="seconds"),
             "company": R.company(), "v7_settings": {k: db.parametre(k) for k in ("v7_policy", "v7_fiscal", "imports_limites")}, "tables": {}}
-    for t in METIER:
-        sans = () if (avec_pieces or t != "pieces") else ("content",)
+    for t in METIER + OPTIONNELLES:
+        sans = () if (avec_pieces or t not in ("pieces", "pieces_jointes")) else ("content",)
         data["tables"][t] = [{k: _serial(v) for k, v in r.items()} for r in db.tout(t, sans=sans)]
     return json.dumps(data, ensure_ascii=False, indent=1).encode("utf-8")
 
@@ -73,13 +76,13 @@ def export_excel() -> bytes:
 def _remplacer(tables: dict, company: dict | None, resume: str, v7_settings=None) -> dict:
     compte = {}
     with db.transaction(resume) as t:
-        for nom in reversed(METIER):
+        for nom in reversed(METIER + OPTIONNELLES):
             t.cx.execute(db.TABLES[nom].delete())
         for cle in ("v7_policy", "v7_fiscal", "imports_limites"):
             t.parametre(cle, (v7_settings or {}).get(cle))
         if company:
             t.parametre("company", company)
-        for nom in METIER:
+        for nom in METIER + OPTIONNELLES:
             rows = tables.get(nom) or []
             if rows:
                 t.cx.execute(db.TABLES[nom].insert(), rows)
@@ -134,6 +137,12 @@ def import_json(contenu: bytes, role: str | None = None) -> dict:
     for nom in METIER:
         cols = {c.name for c in db.TABLES[nom].c}
         tables[nom] = [{k: _deserial(v) for k, v in r.items() if k in cols} for r in data["tables"][nom]]
+    for nom in OPTIONNELLES:
+        if nom in data["tables"]:
+            cols = {c.name for c in db.TABLES[nom].c}
+            tables[nom] = [{k: _deserial(v) for k, v in r.items() if k in cols} for r in data["tables"][nom]]
+        else:  # absente de l'ancienne sauvegarde : on conserve ce qui existe
+            tables[nom] = db.tout(nom)
     return _remplacer(tables, data.get("company"), "Restauration d'une sauvegarde", data.get("v7_settings"))
 
 

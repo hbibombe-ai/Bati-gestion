@@ -58,6 +58,60 @@ h1{letter-spacing:-1px}
 .bg-tag{display:inline-block;background:#eaf1f8;border-radius:4px;padding:2px 8px;font-size:.82rem;margin:1px 2px}
 .bg-tag.ok{background:#e1f5eb;color:#176846}.bg-tag.alerte{background:#fdecea;color:#a62d25}
 :focus-visible{outline:3px solid #dc831c !important;outline-offset:2px}
+
+/* ---- Hiérarchie : titres, sous-titres, séparateurs */
+.block-container{padding-top:2.2rem;padding-bottom:3rem;max-width:1400px}
+h1{font-size:2rem;color:#112740}
+h2,h3{color:#183653;letter-spacing:-.3px}
+hr{margin:1.4rem 0;opacity:.6}
+.bg-sous{font-size:1rem;color:#4f6276;margin:-.4rem 0 1.4rem 0;max-width:820px}
+
+/* ---- Onglets : soulignement ambre sur l'onglet actif */
+[data-baseweb="tab-list"]{gap:4px;border-bottom:1px solid #d3dce6}
+[data-baseweb="tab"]{background:transparent;border-radius:8px 8px 0 0;padding:.55rem 1rem;color:#4f6276;font-weight:600}
+[data-baseweb="tab"][aria-selected="true"]{color:#112740}
+[data-baseweb="tab-highlight"]{background:#efa63a !important;height:3px !important}
+[data-baseweb="tab-border"]{display:none}
+[data-baseweb="tab"][aria-selected="true"]{font-weight:700;box-shadow:inset 0 -3px 0 #efa63a}
+
+/* ---- Boutons : principal bleu nuit, secondaire discret, arrondis cohérents */
+[data-testid^="stBaseButton"]{border-radius:8px;font-weight:600;transition:background .15s,border-color .15s,box-shadow .15s}
+[data-testid="stBaseButton-primary"]{background:#183653;border-color:#183653;color:#fff}
+[data-testid="stBaseButton-primary"]:hover{background:#112740;border-color:#112740;box-shadow:0 2px 6px rgba(17,39,64,.25)}
+[data-testid="stBaseButton-secondary"]{background:#fff;border-color:#c9d4e0;color:#183653}
+[data-testid="stBaseButton-secondary"]:hover{border-color:#183653;background:#f5f8fb}
+[data-testid="stBaseButton-secondary"]:disabled,[data-testid="stBaseButton-primary"]:disabled{opacity:.45}
+
+/* ---- Champs de saisie : bordures et focus plus nets */
+[data-baseweb="input"],[data-baseweb="select"]>div,[data-baseweb="textarea"]{border-radius:8px !important;border-color:#c9d4e0 !important}
+[data-baseweb="input"]:focus-within,[data-baseweb="select"]>div:focus-within{border-color:#183653 !important;box-shadow:0 0 0 1px #183653}
+
+/* ---- Tableaux et listes */
+[data-testid="stDataFrame"]{border:1px solid #dce4ed;border-radius:10px;overflow:hidden;background:#fff}
+[data-testid="stDataFrame"] [role="columnheader"]{background:#eef3f8;color:#172b43;font-weight:700}
+
+/* ---- Messages */
+[data-testid="stAlert"]{border-radius:10px;border:1px solid #dce4ed}
+[data-testid="stAlert"] p{font-size:.95rem}
+
+/* ---- Blocs repliables et formulaires */
+[data-testid="stExpander"]{border:1px solid #dce4ed;border-radius:10px;background:#fff;overflow:hidden}
+[data-testid="stExpander"] summary{font-weight:600;color:#183653}
+[data-testid="stForm"]{border:1px solid #dce4ed;border-radius:10px;background:#fff;padding:1rem 1.1rem}
+
+/* ---- Barre latérale : libellés de section discrets */
+[data-testid="stSidebarNavSeparator"]{margin:.9rem 0 .3rem 0}
+[data-testid="stSidebarNavSeparator"] + div{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:#8ea3b8}
+[data-testid="stSidebarNavLink"]{border-radius:8px;margin:1px 6px}
+[data-testid="stSidebarNavLink"]:hover{background:rgba(255,179,71,.09)}
+
+/* ---- Petits écrans : marges de 16 px, pas de défilement horizontal */
+@media (max-width: 760px){
+ .block-container{padding-left:16px;padding-right:16px;padding-top:1.2rem}
+ h1{font-size:1.6rem}
+ [data-testid="stHorizontalBlock"]{flex-wrap:wrap}
+ [data-testid="stMetricValue"]{font-size:1.2rem}
+}
 </style>
 """
 STYLE_CONNEXION = """
@@ -90,6 +144,78 @@ def flash() -> None:
         msg = st.session_state.pop(f"flash_{niveau}", None)
         if msg:
             {"succes": st.success, "erreur": st.error, "info": st.info}[niveau](msg)
+
+
+def mime_fichier(contenu: bytes) -> str | None:
+    """Type réel du fichier, d'après son contenu (PDF, JPEG ou PNG)."""
+    if contenu[:4] == b"%PDF":
+        return "application/pdf"
+    if contenu[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if contenu[:4] == b"\x89PNG":
+        return "image/png"
+    return None
+
+
+def pieces_jointes(entite: str, entite_id: str, peut_ajouter: bool, titre: str = "Documents joints") -> None:
+    """Liste les documents joints à une fiche ; ajoute ou retire selon les droits de l'usager."""
+    import hashlib
+    import re
+
+    import auth
+    import db
+
+    rows = db.requete("select id, nom, libelle, taille, mime, ajoute_par, ajoute_le from pieces_jointes "
+                      "where entite = :e and entite_id = :i order by ajoute_le", e=entite, i=entite_id)
+    with st.expander(f"{titre} ({len(rows)})", expanded=bool(rows)):
+        if not rows:
+            st.caption("Aucun document joint à cette fiche.")
+        moi = (auth.utilisateur() or {}).get("id")
+        dg = auth.droit("approbation_dg") == "w"
+        for r in rows[:50]:
+            a, b, c = st.columns([5, 2, 2])
+            a.markdown(f"**{r['nom']}**  \n{r['libelle'] or '—'}")
+            b.caption(f"{r['taille'] // 1024} Ko · {str(r['ajoute_le'])[:10]}")
+            with c:
+                contenu = db.requete("select contenu from pieces_jointes where id = :i", i=r["id"])[0]["contenu"]
+                ui.telecharger("Ouvrir", contenu, r["nom"], r["mime"], key=f"pj_dl_{r['id']}")
+                if peut_ajouter and (dg or r["ajoute_par"] == moi) and st.button("Retirer", key=f"pj_del_{r['id']}",
+                                                                                   icon=":material/delete:"):
+                    with db.transaction(f"Retrait du document {r['nom']}") as t:
+                        t.supprimer("pieces_jointes", r["id"])
+                    succes("Document retiré.")
+        if peut_ajouter:
+            with st.form(f"pj_form_{entite}_{entite_id}", clear_on_submit=True):
+                st.markdown("**Joindre un document** — PDF, JPEG ou PNG, 5 Mo au plus")
+                libelle = st.text_input("Libellé", placeholder="ex. Contrat signé, Permis, Attestation fiscale")
+                fichiers = st.file_uploader("Fichier(s)", type=["pdf", "jpg", "jpeg", "png"],
+                                            accept_multiple_files=True)
+                ok = st.form_submit_button("Joindre", type="primary")
+            if ok:
+                try:
+                    if not fichiers:
+                        raise ValueError("Choisissez au moins un fichier.")
+                    for f in fichiers:
+                        contenu = f.getvalue()
+                        if not contenu or len(contenu) > R.PIECE_MAX:
+                            raise ValueError(f"« {f.name} » : fichier vide ou plus de 5 Mo.")
+                        mime = mime_fichier(contenu)
+                        if not mime:
+                            raise ValueError(f"« {f.name} » : seuls les PDF, JPEG et PNG sont acceptés.")
+                        empreinte = hashlib.sha256(contenu).hexdigest()
+                        if db.requete("select id from pieces_jointes where entite = :e and entite_id = :i and sha256 = :h",
+                                      e=entite, i=entite_id, h=empreinte):
+                            raise ValueError(f"« {f.name} » est déjà joint à cette fiche.")
+                        nom = re.sub(r'[\\/:*?"<>|]+', "_", f.name)[:280] or "document"
+                        with db.transaction(f"Document joint : {nom}") as t:
+                            t.inserer("pieces_jointes", {"id": db.nouvel_id(), "entite": entite, "entite_id": entite_id,
+                                                        "libelle": (libelle or "").strip()[:200], "nom": nom, "mime": mime,
+                                                        "taille": len(contenu), "sha256": empreinte, "contenu": contenu,
+                                                        "ajoute_par": moi, "ajoute_le": db.maintenant()})
+                except ValueError as e:
+                    st.error(str(e))
+                else:
+                    succes("Document(s) joint(s).")
 
 
 def succes(msg: str, rerun: bool = True) -> None:

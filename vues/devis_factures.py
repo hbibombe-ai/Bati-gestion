@@ -1,5 +1,10 @@
-"""Devis et factures clients : prestations, impression PDF, conversion devis → facture, règlements."""
+"""Devis et factures clients : prestations, impression PDF, conversion devis → facture, règlements,
+téléchargement des factures (un PDF, ou un ZIP pour plusieurs)."""
 from __future__ import annotations
+
+import io
+import re
+import zipfile
 
 import pandas as pd
 import streamlit as st
@@ -187,6 +192,17 @@ def page(kind: str) -> None:
     ui.en_tete(titre, "Préparez et imprimez vos propositions." if kind == "quotes"
                else "Suivez les montants facturés et les règlements.")
     s = R.charger("clients", "projects", "quotes", "invoices")
+    if kind != "invoices":
+        _gestion(kind, s)
+        return
+    onglet_factures, onglet_telecharger = st.tabs(["Factures", "Télécharger"])
+    with onglet_factures:
+        _gestion(kind, s)
+    with onglet_telecharger:
+        _telecharger(s)
+
+
+def _gestion(kind: str, s: dict) -> None:
     ecrit = auth.modifie("commercial")
     if ecrit and st.button(f"Nouveau {NOMS[kind][1]}" if kind == "quotes" else "Nouvelle facture", type="primary",
                            icon=":material/add:"):
@@ -252,3 +268,58 @@ def page(kind: str) -> None:
                                 "Prix unitaire": R.money(l["price"], d["currency"]),
                                 "Montant": R.money(R.js_round(float(l["qty"]) * l["price"]), d["currency"])}
                                for l in d["lines"]]), hide_index=True, width="stretch")
+
+
+def _nom_fichier(texte: str) -> str:
+    return re.sub(r"[^\w.-]+", "_", texte).strip("_") or "facture"
+
+
+def _fichier(factures: list[dict], s: dict) -> tuple[str, bytes, str]:
+    """Un PDF pour une facture ; un ZIP de PDF pour plusieurs. Les noms en double reçoivent un suffixe."""
+    if len(factures) == 1:
+        d = factures[0]
+        return f"{_nom_fichier(d['number'])}.pdf", document_pdf("invoices", d, s), ui.MIME_PDF
+    buf = io.BytesIO()
+    vus: set[str] = set()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for d in factures:
+            base = _nom_fichier(d["number"])
+            nom, n = f"{base}.pdf", 2
+            while nom in vus:
+                nom = f"{base}_{n}.pdf"
+                n += 1
+            vus.add(nom)
+            z.writestr(nom, document_pdf("invoices", d, s))
+    return f"factures_{R.today()}.zip", buf.getvalue(), "application/zip"
+
+
+def _telecharger(s: dict) -> None:
+    st.caption("Choisissez une facture (PDF) ou plusieurs (un fichier ZIP de PDF).")
+    factures = sorted(s["invoices"], key=lambda d: (d["date"], d["number"]), reverse=True)
+    if not factures:
+        st.info("Aucune facture à télécharger pour le moment.")
+        return
+    libelles = {d["id"]: f"{d['number']} · {R.client_name(s, d['client'])} · {d['date']} · "
+                         f"{R.money(R.total(d), d['currency'])}" for d in factures}
+    if st.checkbox("Toutes les factures", key="dl_tout"):
+        ids = list(libelles)
+        st.caption(f"{len(ids)} facture(s) seront téléchargées.")
+    else:
+        ids = st.multiselect("Factures à télécharger", list(libelles), format_func=libelles.get, key="dl_choix")
+    if not ids:
+        st.caption("Sélectionnez au moins une facture.")
+        return
+    if len(ids) > 200:
+        st.warning("Maximum 200 factures par téléchargement : affinez la sélection.")
+        return
+    cle = tuple(sorted(ids))
+    if st.button("Préparer le PDF" if len(ids) == 1 else "Préparer le fichier ZIP", type="primary",
+                 icon=":material/download:", key="dl_prep"):
+        choisies = [d for d in factures if d["id"] in ids]
+        st.session_state["dl_pret"] = (cle, _fichier(choisies, s))
+    pret = st.session_state.get("dl_pret")
+    if pret and pret[0] == cle:  # le fichier préparé ne s'affiche que pour la sélection courante
+        nom, data, mime = pret[1]
+        ui.telecharger("Télécharger", data, nom, mime, key=f"dl_fichier_{hash(cle)}", principal=True)
+    else:
+        st.caption("Cliquez sur « Préparer » pour générer le fichier de la sélection.")

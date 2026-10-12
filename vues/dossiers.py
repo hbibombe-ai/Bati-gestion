@@ -94,6 +94,15 @@ def formulaire(type_: str, did: str | None = None) -> None:
             ui.succes("Dossier préparatoire enregistré.")
 
 
+def _ao_resume(d: dict) -> str:
+    v = d.get("values") or {}
+    statut = v.get("ao_statut") or R.AO_PAS
+    limite = R.limite_ao(d["type"], v)
+    if statut in (R.AO_A_DEPOSER, R.AO_DEPOSE) and R.is_date(limite):
+        return f"{statut} · limite {limite}"
+    return statut
+
+
 def page_espace(cle: str) -> None:
     titre, types = R.V7_SPACES[cle]
     module = module_de(types[0])
@@ -119,19 +128,26 @@ def page_espace(cle: str) -> None:
         st.info("Aucun dossier saisi. Ajoutez une première fiche.")
         return
     premier = next((R.field_spec(f)[0] for f in spec["fields"] if R.field_spec(f)[2] in ("text", "link")), None)
+    avec_ao = type_ in R.AO_TYPES
     lignes = [{"_id": d["id"], "ref": d["ref"], "date": d["date"],
                "obj": R.dossier_value(s, d, next(f for f in spec["fields"] if f[0] == premier)) if premier else "",
                "ch": R.project_name(s, d["project"]) if d["project"] else
                next((c["ref"] for c in s["erp_dossiers"] if c["id"] == d["centre"]), "—"),
-               "st": "Brouillon"} for d in rows]
-    i = ui.tableau(lignes, {"ref": "Référence", "date": "Date", "obj": next((R.field_spec(f)[1] for f in spec["fields"]
-                                                                          if f[0] == premier), "Objet"),
-                            "ch": "Chantier / centre", "st": "Statut"}, key=f"tab_{cle}_{type_}", selection=True)
+               "st": "Brouillon",
+               **({"ao": _ao_resume(d)} if avec_ao else {})} for d in rows]
+    colonnes = {"ref": "Référence", "date": "Date", "obj": next((R.field_spec(f)[1] for f in spec["fields"]
+                                                               if f[0] == premier), "Objet"),
+                "ch": "Chantier / centre", "st": "Statut"}
+    if avec_ao:
+        colonnes["ao"] = "Appel d’offres"
+    i = ui.tableau(lignes, colonnes, key=f"tab_{cle}_{type_}", selection=True)
     if i is None:
         st.caption("Sélectionnez un dossier pour l’ouvrir, le modifier ou l’exporter.")
         return
     d = next(x for x in rows if x["id"] == lignes[i]["_id"])
     st.subheader(f"{spec['label']} · {d['ref']}")
+    if type_ in R.AO_TYPES:  # prospects, contrats et appels d’offres : pièces jointes (appel, offre, contrat signé)
+        ui.pieces_jointes("dossier", d["id"], peut_ajouter=ecrit)
     c1, c2, c3 = ui.rangee(3)
     if ecrit and c1.button("Modifier", icon=":material/edit:", key=f"mod_{d['id']}"):
         formulaire(type_, d["id"])

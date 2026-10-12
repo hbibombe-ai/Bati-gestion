@@ -111,6 +111,7 @@ def page() -> None:
         return
     p = next(x for x in s["projects"] if x["id"] == rows[i]["_id"])
     st.subheader(p["name"])
+    ui.pieces_jointes("chantiers", p["id"], peut_ajouter=ecrit)
     if ecrit and st.button("Modifier ce chantier", icon=":material/edit:"):
         formulaire(p["id"])
     a, b, c = st.columns(3)
