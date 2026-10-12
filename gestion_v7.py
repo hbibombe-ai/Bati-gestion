@@ -29,12 +29,27 @@ CHART = {'101':'Capital social','16':'Emprunts','23':'Bâtiments','24':'Matérie
  '706':'Services vendus','89':'Impôts sur le résultat'}
 DEFAULT_POLICY = {'thresholds':[70,85,95,100], 'levels':list(LEVELS), 'max_advance_days':30}
 
+def _exiger(u, module, message):
+    if not peut(u, module):raise ValueError(message)
+
 def actor(roles=None):
     u=auth.utilisateur() or {};fresh=db.un('users',u.get('id')) if u.get('id') else None
     if not fresh or not fresh.get('actif') or fresh.get('doit_changer_mdp'):
         raise ValueError('Une session active avec mot de passe personnel est requise.')
     if roles and fresh['role'] not in roles:raise ValueError('Votre rôle ne permet pas cette action.')
+    fresh['droits']=auth.droits_de(fresh['id'],fresh['role'])
     return fresh
+
+APPROB = {'N1': 'approbation_n1', 'N2': 'approbation_n2', 'N3': 'approbation_n3', 'DG': 'approbation_dg'}
+
+def peut(u, module):
+    """Droit d'approbation ou de gestion accordé à l'usager (rubrique réglée par l'administrateur)."""
+    return auth.peut(u.get('droits'), module)
+
+def approbateur(u):
+    """Vrai si l'usager détient au moins un niveau d'approbation (utile pour désigner un délégataire)."""
+    d = auth.droits_de(u['id'], u['role'])
+    return any(d.get(m) == 'w' for m in APPROB.values())
 
 def amount(v, positive=False):
     if type(v) is not int or v<0 or v>10**14 or (positive and v==0):raise ValueError('Montant invalide en centimes.')
@@ -119,7 +134,7 @@ def _create_budget_tx(t,u,project,code,lines,contract,forecast,revenue=None,extr
     return insert(t,'budget',code,project,p['currency'],data)
 
 def approve_budget(id_,reason):
-    u=actor(['admin'])
+    u=actor();_exiger(u,'approbation_dg','Approbation du budget réservée à la DG.')
     with db.transaction('Approbation du budget DQE') as t:_approve_budget_tx(t,u,id_,reason)
 
 def _approve_budget_tx(t,u,id_,reason):
@@ -141,7 +156,7 @@ def revise_budget(id_,lines,forecast,revenue,reason):
         d['pending']=dict(lines=lines,forecast=forecast,revenue=revenue,creator=u['id']);event(d,u,'Révision proposée',reason);save(t,r,d)
 
 def approve_revision(id_,reason):
-    u=actor(['admin'])
+    u=actor();_exiger(u,'approbation_dg','Révision réservée à la DG.')
     with db.transaction('Révision budgétaire autorisée') as t:
         r=get(t,id_,'budget');d=deepcopy(r['data']);p=d.get('pending')
         if not p or p['creator']==u['id'] or not reason.strip():raise ValueError('Révision indépendante et motif requis.')
@@ -201,7 +216,7 @@ def edit_operation(id_,value,label,due):
     u=actor(['admin','finance','chantier']);amount(value,True);date(due)
     with db.transaction('Modification et nouvelle validation V7') as t:
         r=get(t,id_,'operation');d=deepcopy(r['data'])
-        if u['id']!=d['creator'] and u['role']!='admin':raise ValueError('Seul le créateur ou la DG peut modifier.')
+        if u['id']!=d['creator'] and not peut(u,'approbation_dg'):raise ValueError('Seul le créateur ou la DG peut modifier.')
         if d.get('payments') or d.get('cost') or d.get('order'):raise ValueError('Opération exécutée : annulation ou nouvelle demande requise.')
         d.update(amount=value,label=label,due=due,status='Brouillon',level=0,approvals=[]);d.pop('exception',None);event(d,u,'Modification réinitialise validations');save(t,r,d)
 
@@ -213,19 +228,18 @@ def submit(id_):
         d.update(status='Soumise',level=0);event(d,u,'Soumission N1');save(t,r,d)
 
 def authorized_level(u,level,project,currency,value,tx):
-    base={'N1':('chantier','admin'),'N2':('finance','admin'),'N3':('finance','admin'),'DG':('admin',)}
-    if u['role'] in base[level]:return True
+    if peut(u,APPROB[level]):return True
     today=R.today()
     return any(r['data']['user']==u['id'] and r['data']['level']==level and r['currency']==currency and
                r['project'] in ('',project) and r['data']['start']<=today<=r['data']['end'] and value<=r['data']['limit'] and not r['data'].get('revoked') for r in records('delegation',tx))
 
 def delegate(user,level,project,currency,limit,start,end,reason):
-    u=actor(['admin']);target=db.un('users',user);date(start);date(end);amount(limit,True)
+    u=actor();_exiger(u,'approbation_dg','Délégation réservée à la DG.');target=db.un('users',user);date(start);date(end);amount(limit,True)
     if not target or not target['actif'] or target['role'] not in ('finance','chantier','admin') or level not in LEVELS or start>end or not reason.strip():raise ValueError('Délégation invalide.')
     with db.transaction('Délégation limitée V7') as t:return insert(t,'delegation',db.nouvel_id(),project,currency,dict(user=user,level=level,limit=limit,start=start,end=end,reason=reason,issuer=u['id']))
 
 def revoke_delegate(id_,reason):
-    u=actor(['admin'])
+    u=actor();_exiger(u,'approbation_dg','Révocation réservée à la DG.')
     with db.transaction('Révocation délégation') as t:
         r=get(t,id_,'delegation');d=deepcopy(r['data'])
         if not reason.strip():raise ValueError('Motif requis.')
@@ -397,7 +411,7 @@ def cancel(id_,reason):
     with db.transaction('Annulation conservée V7') as t:
         r=get(t,id_,'operation');d=deepcopy(r['data'])
         if d.get('cost') or any(not p.get('reversed') for p in d['payments']) or not reason.strip():raise ValueError('Contrepassez les paiements ; une charge comptabilisée ne peut pas être effacée.')
-        if d['creator']!=u['id'] and u['role']!='admin':raise ValueError('Créateur ou DG requis.')
+        if d['creator']!=u['id'] and not peut(u,'approbation_dg'):raise ValueError('Créateur ou DG requis.')
         d['status']='Annulée';event(d,u,'Annulation',reason);save(t,r,d)
 
 def reconcile(account,date_,statement,matched,reference):
@@ -548,7 +562,7 @@ def _cash_in_entries(tx,currency):
 
 def _approve_carryover_tx(t,u,id_,reason):
     r=get(t,id_,'carryover');d=deepcopy(r['data'])
-    if u['role']!='admin':raise ValueError('Activation réservée à la DG.')
+    if not peut(u,'approbation_dg'):raise ValueError('Activation réservée à la DG.')
     if d['creator']==u['id']:raise ValueError('La DG ne peut pas activer une reprise qu’elle a elle-même importée.')
     if d['status']!='À approuver':raise ValueError('Reprise déjà traitée.')
     if not reason.strip():raise ValueError('Motif d’activation obligatoire.')

@@ -29,12 +29,16 @@ def _role() -> str:
     return (auth.utilisateur() or {}).get("role", "")
 
 
+def _droits() -> dict:
+    return (auth.utilisateur() or {}).get("droits") or auth.DROITS.get(_role(), {})
+
+
 def fonctions_permises(role: str, parmi: list[str] | None = None) -> list[str]:
     out = []
     for cle, f in S.FONCTIONS.items():
         if parmi and cle not in parmi:
             continue
-        if any(VA.autorise(role, S.FEUILLES[n]) for n in f.feuilles):
+        if any(VA.autorise(role, S.FEUILLES[n], (auth.utilisateur() or {}).get('droits')) for n in f.feuilles):
             out.append(cle)
     return out
 
@@ -44,7 +48,7 @@ def _modes(cle: str, role: str) -> list[str]:
     modes = set()
     for n in f.feuilles:
         fe = S.FEUILLES[n]
-        if VA.autorise(role, fe):
+        if VA.autorise(role, fe, (auth.utilisateur() or {}).get('droits')):
             modes |= set(fe.modes)
     return [m for m in S.MODES if m in modes]
 
@@ -214,25 +218,26 @@ def _lots_tab() -> None:
         ui.tableau([{**r, "montant": _montant(r["montant"], r["devise"]), "reste": _montant(r["reste"], r["devise"])} for r in rel],
                    {"ref": "Référence", "type": "Nature", "devise": "Devise", "montant": "Montant repris", "reste": "Reste",
                     "statut": "Statut"}, key=f"rel_{l['id']}")
-    lignes = SV.lignes_lot(l["id"], _role())
+    lignes = SV.lignes_lot(l["id"], _droits())
     if lignes:
         feuilles = [n for n, v in lignes.items() if v]
         if feuilles:
             fe = st.pills("Lignes conservées", feuilles, default=feuilles[0], key=f"pl_{l['id']}") or feuilles[0]
             ui.tableau([{k: v for k, v in r.items()} for r in lignes[fe][:2000]],
                        {k: k for k in (["__line"] + S.FEUILLES[fe].colonnes)}, key=f"li_{l['id']}_{fe}")
-    role, uid = _role(), (auth.utilisateur() or {}).get("id")
-    if l["statut"] not in SV.STATUTS_PREPARES or role not in ("finance", "admin"):
+    uid, dr = (auth.utilisateur() or {}).get("id"), _droits()
+    n2, dg = auth.peut(dr, "approbation_n2"), auth.peut(dr, "approbation_dg")
+    if l["statut"] not in SV.STATUTS_PREPARES or not (n2 or dg):
         return
     motif = st.text_input("Motif / référence du rapprochement", key=f"motif_{l['id']}")
     c = ui.rangee(3)
-    if l["statut"] == "Préparé" and role in ("finance", "admin") and uid != l["cree_par"]:
+    if l["statut"] == "Préparé" and n2 and uid != l["cree_par"]:
         if c[0].button("Valider (Finance)", key=f"vf_{l['id']}", type="primary"):
             _executer(SV.valider_finance, l["id"], motif, ok="Lot validé par Finance.")
-    if l["statut"] == "Validé Finance" and role == "admin":
+    if l["statut"] == "Validé Finance" and dg:
         if c[1].button("Activer (DG)", key=f"act_{l['id']}", type="primary"):
             _executer(SV.activer, l["id"], motif, ok="Lot activé : budgets, soldes et reliquats sont désormais effectifs.")
-    if l["statut"] in SV.STATUTS_PREPARES and role in ("finance", "admin"):
+    if l["statut"] in SV.STATUTS_PREPARES and (n2 or dg):
         if c[2].button("Rejeter le lot", key=f"rej_{l['id']}"):
             _executer(SV.rejeter, l["id"], motif, ok="Lot rejeté : aucune donnée exécutée n’a été supprimée.")
 

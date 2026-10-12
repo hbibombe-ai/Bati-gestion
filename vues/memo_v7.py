@@ -49,7 +49,7 @@ def budget_tab():
     st.write(f"Avances à régulariser : {R.money(m['advance'],currency)} · Prévision à terminaison : {R.money(m['forecast'],currency)} · Marge finale : {R.money(m['final_margin'],currency)}")
     legacy=[e for e in db.tout('expenses') if e['project']==b['project']]
     if legacy:st.warning('Des dépenses historiques existent sur ce chantier. Elles doivent être rapprochées et reprises avant de considérer le budget V7 comme exhaustif.')
-    if (auth.utilisateur() or {}).get('role')=='admin':
+    if auth.droit('approbation_dg')=='w':
         with st.form('approve_budget'):
             reason=st.text_input('Motif de validation du budget')
             if st.form_submit_button('Approuver le budget',disabled=b['data']['status']=='Approuvé'):execute(V.approve_budget,b['id'],reason)
@@ -65,7 +65,7 @@ def budget_tab():
                 else:execute(V.revise_budget,b['id'],lines,R.cents(f),R.cents(revenue),reason)
         if b['data'].get('pending'):
             table(b['data']['pending']['lines'])
-            if (auth.utilisateur() or {}).get('role')=='admin':
+            if auth.droit('approbation_dg')=='w':
                 with st.form('v7_revision_ok'):
                     reason=st.text_input('Motif d’autorisation DG de la révision')
                     if st.form_submit_button('Autoriser la révision'):execute(V.approve_revision,b['id'],reason)

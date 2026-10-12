@@ -35,29 +35,71 @@ DESCRIPTION_ROLES = {
 MODULES = ["accueil", "recherche", "rapports", "chantiers", "tiers", "comptes", "commercial", "depenses",
            "justificatifs", "validation_pieces", "tresorerie", "personnel", "pointage", "paie", "achats",
            "charroi", "projets", "comptabilite", "documents", "societe", "reprise", "utilisateurs",
-           "sauvegarde", "audit", "imports"]
+           "sauvegarde", "audit", "imports",
+           "approbation_n1", "approbation_n2", "approbation_n3", "approbation_dg"]
 DROITS = {
     "admin": {m: "w" for m in MODULES},
     "finance": {"accueil": "r", "recherche": "r", "rapports": "r", "chantiers": "r", "tiers": "w",
                 "comptes": "w", "commercial": "w", "depenses": "w", "justificatifs": "w",
                 "validation_pieces": "w", "tresorerie": "w", "achats": "w", "charroi": "r", "projets": "r",
-                "comptabilite": "w", "documents": "w", "societe": "r", "reprise": "w", "imports": "w"},
+                "comptabilite": "w", "documents": "w", "societe": "r", "reprise": "w", "imports": "w",
+                "approbation_n2": "w", "approbation_n3": "w"},
     "rh": {"accueil": "r", "recherche": "r", "chantiers": "r", "personnel": "w", "pointage": "w", "paie": "w",
            "documents": "r", "societe": "r", "imports": "w"},
     "chantier": {"accueil": "r", "recherche": "r", "chantiers": "w", "tiers": "r", "depenses": "w",
                  "justificatifs": "w", "personnel": "r", "pointage": "w", "achats": "w", "charroi": "w",
-                 "projets": "w", "documents": "r", "societe": "r", "imports": "w"},
+                 "projets": "w", "documents": "r", "societe": "r", "imports": "w", "approbation_n1": "w"},
     "lecteur": {"accueil": "r", "recherche": "r", "rapports": "r", "chantiers": "r", "tiers": "r", "comptes": "r",
                 "commercial": "r", "depenses": "r", "justificatifs": "r", "tresorerie": "r", "personnel": "r",
                 "achats": "r", "charroi": "r", "projets": "r", "comptabilite": "r", "documents": "r",
                 "societe": "r", "imports": "r"},
 }
 
+# Libellés des rubriques (affichés dans la gestion des accès).
+MODULE_LABELS = {
+    "accueil": "Vue d’ensemble", "recherche": "Recherche globale", "rapports": "Rapports et alertes",
+    "chantiers": "Chantiers", "tiers": "Clients et fournisseurs", "comptes": "Comptes tiers",
+    "commercial": "Devis, factures, prospects", "depenses": "Dépenses et circuit financier V7",
+    "justificatifs": "Justificatifs", "validation_pieces": "Validation des pièces", "tresorerie": "Trésorerie et journal de caisse",
+    "personnel": "Personnel et congés", "pointage": "Pointage et présence Kobo", "paie": "Paie (salaires)",
+    "achats": "Achats et stocks", "charroi": "Matériel et charroi", "projets": "DQE, situations, qualité",
+    "comptabilite": "Comptabilité et fiscalité", "documents": "Registres, garanties, tâches", "societe": "Société",
+    "reprise": "Reprise historique", "utilisateurs": "Utilisateurs", "sauvegarde": "Paramètres et sauvegarde",
+    "audit": "Journal d’audit", "imports": "Centre d’import",
+    "approbation_n1": "Approbation N1 (contrôle chantier, dépenses)",
+    "approbation_n2": "Approbation N2 (finance, rapprochement des lots)",
+    "approbation_n3": "Approbation N3 (autorisation de paiement)",
+    "approbation_dg": "Approbation DG (budgets, révisions, délégations, activation)",
+}
+NIVEAUX = {"w": "Modification", "r": "Consultation", None: "Aucun"}
+
 ITERATIONS = 260_000
 DUREE_SESSION = dt.timedelta(hours=12)
 ECHECS_MAX = 5
 DUREE_BLOCAGE = dt.timedelta(minutes=15)
 MDP_INITIAL_PAR_DEFAUT = "changez-moi"
+
+
+def droits_de(uid: int, role: str) -> dict:
+    """Droits effectifs d'un usager : le modèle de son rôle, sauf les accès réglés par l'administrateur."""
+    if role == "admin":  # la direction générale garde toujours tous les accès
+        return {m: "w" for m in MODULES}
+    base = dict(DROITS.get(role, {}))
+    perso = db.parametre(f"droits_utilisateur:{uid}")
+    if isinstance(perso, dict):
+        for m, niveau in perso.items():
+            if m in MODULES:
+                base[m] = None if niveau in (None, "x") else niveau
+    return {m: base.get(m) for m in MODULES}
+
+
+def peut(droits: dict | None, module: str) -> bool:
+    """Vrai si les droits (session ou base) donnent la modification de la rubrique."""
+    return (droits or {}).get(module) == "w"
+
+
+def personnalise(uid: int) -> bool:
+    return isinstance(db.parametre(f"droits_utilisateur:{uid}"), dict)
 
 
 # ----------------------------------------------------------------- mots de passe
@@ -178,7 +220,9 @@ def connecter(identifiant: str, mdp: str) -> tuple[dict | None, str | None]:
         c.execute(db.audit.insert().values(quand=db.maintenant(), user_id=row["id"], user_nom=row["nom"],
                                            action="Connexion", objet="users", objet_id=str(row["id"]),
                                            resume=f"Connexion de {row['identifiant']}"))
-        return {k: row[k] for k in ("id", "identifiant", "nom", "role", "doit_changer_mdp")}, None
+        out = {k: row[k] for k in ("id", "identifiant", "nom", "role", "doit_changer_mdp")}
+        out["droits"] = droits_de(row["id"], row["role"])
+        return out, None
 
 
 # --------------------------------------------------------------------- session
@@ -217,7 +261,9 @@ def depuis_jeton(texte: str) -> dict | None:
         return None
     if not u or not u["actif"] or int(u["version_session"] or 0) != int(version):
         return None
-    return {k: u[k] for k in ("id", "identifiant", "nom", "role", "doit_changer_mdp")}
+    out = {k: u[k] for k in ("id", "identifiant", "nom", "role", "doit_changer_mdp")}
+    out["droits"] = droits_de(u["id"], u["role"])
+    return out
 
 
 def utilisateur() -> dict | None:
@@ -242,8 +288,11 @@ def deconnecter() -> None:
 
 # --------------------------------------------------------------------- droits
 def droit(module: str) -> str | None:
-    role = (utilisateur() or {}).get("role")
-    return DROITS.get(role, {}).get(module)
+    u = utilisateur() or {}
+    droits = u.get("droits")
+    if droits is None:  # session ouverte avant ce réglage : modèle du rôle
+        droits = DROITS.get(u.get("role"), {})
+    return droits.get(module)
 
 
 def voit(module: str) -> bool:

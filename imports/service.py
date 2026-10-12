@@ -248,7 +248,8 @@ def _historique(l, u, action, motif, statut):
 
 def valider_finance(lot_id: str, motif: str) -> None:
     """Rapprochement vérifié par Finance (personne distincte de l'importateur)."""
-    u = V.actor(["finance", "admin"])
+    u = V.actor()
+    V._exiger(u, "approbation_n2", "Validation réservée aux approbateurs Finance (N2).")
     if not motif.strip():
         raise ValueError("Motif / référence du rapprochement obligatoire.")
     with db.transaction("Validation Finance d’un lot de reprise") as t:
@@ -263,7 +264,8 @@ def valider_finance(lot_id: str, motif: str) -> None:
 
 def activer(lot_id: str, motif: str) -> dict:
     """Activation DG : approuve budgets et reliquats du lot dans une seule transaction (tout ou rien)."""
-    u = V.actor(["admin"])
+    u = V.actor()
+    V._exiger(u, "approbation_dg", "Activation réservée à la DG.")
     if not motif.strip():
         raise ValueError("Motif d’activation obligatoire.")
     with db.transaction("Activation DG d’un lot de reprise") as t:
@@ -316,7 +318,9 @@ def _rejeter_tx(t, u, lot_id, motif, remplace_par=""):
 
 
 def rejeter(lot_id: str, motif: str) -> None:
-    u = V.actor(["admin", "finance"])
+    u = V.actor()
+    if not (V.peut(u, "approbation_n2") or V.peut(u, "approbation_dg")):
+        raise ValueError("Rejet réservé aux approbateurs Finance (N2) ou à la DG.")
     if not motif.strip():
         raise ValueError("Motif du rejet obligatoire.")
     with db.transaction("Rejet d’un lot de reprise") as t:
@@ -328,14 +332,14 @@ def contenu_lot(lot_id: str) -> bytes | None:
     return bytes(rows[0]["contenu"]) if rows and rows[0]["contenu"] is not None else None
 
 
-def lignes_lot(lot_id: str, role: str) -> dict:
-    """Lignes conservées d'un lot ; les champs confidentiels sont masqués hors RH et DG."""
+def lignes_lot(lot_id: str, droits: dict) -> dict:
+    """Lignes conservées d'un lot ; les champs confidentiels sont masqués sans accès à la paie."""
     rows = db.requete("select lignes from import_lots where id = :i", i=lot_id)
     lignes = rows[0]["lignes"] if rows else {}
     if isinstance(lignes, str):
         lignes = json.loads(lignes)
     lignes = lignes or {}
-    if role in ("admin", "rh"):
+    if droits.get("paie") in ("r", "w"):
         return lignes
     out = {}
     for nom, ls in lignes.items():

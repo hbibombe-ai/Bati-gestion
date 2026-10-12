@@ -212,10 +212,15 @@ def controler_parametres(ds: dict, ctx: dict, rep: Rapport) -> None:
         rep.erreur("Parametres", 0, "source_systeme", "300 caractères au plus.")
 
 
-def autorise(role: str, fe: S.Feuille) -> bool:
-    if fe.roles:
-        return role in fe.roles and auth.DROITS.get(role, {}).get(fe.module) == "w"
-    return auth.DROITS.get(role, {}).get(fe.module) == "w"
+def autorise(role: str, fe: S.Feuille, droits: dict | None = None) -> bool:
+    """Feuille d'import : il faut la modification de la rubrique. Les restrictions par rôle (fe.roles)
+    ne s'appliquent qu'au modèle du rôle ; une rubrique accordée expressément par l'administrateur suit ce réglage."""
+    modele = auth.DROITS.get(role, {})
+    droits = droits if droits is not None else modele
+    if droits.get(fe.module) != "w":
+        return False
+    expresse = droits.get(fe.module) != modele.get(fe.module)
+    return not fe.roles or role in fe.roles or expresse
 
 
 def controler_droits(ds: dict, ctx: dict, rep: Rapport) -> None:
@@ -225,10 +230,11 @@ def controler_droits(ds: dict, ctx: dict, rep: Rapport) -> None:
             continue
         fe = S.FEUILLES[nom]
         confidentiels = [c.nom for c in fe.champs if c.confidentiel]
-        if confidentiels and role not in ("admin", "rh") and any(l.get(c) not in (None, "") for l in lignes for c in confidentiels):
+        droits = ctx["user"].get("droits") or auth.DROITS.get(role, {})
+        if confidentiels and not auth.peut(droits, "paie") and any(l.get(c) not in (None, "") for l in lignes for c in confidentiels):
             rep.confidentiel_refuse = True
-            rep.erreur(nom, 0, "", "Données de rémunération réservées aux RH et à la DG : import refusé, contenu non affiché.")
-        if not autorise(role, fe):
+            rep.erreur(nom, 0, "", "Données de rémunération réservées aux usagers ayant accès à la paie : import refusé, contenu non affiché.")
+        if not autorise(role, fe, droits):
             rep.erreur(nom, 0, "", "Votre rôle ne permet pas d’importer cette feuille (mêmes droits que la saisie).")
             if fe.module in ("personnel", "paie"):
                 rep.confidentiel_refuse = True

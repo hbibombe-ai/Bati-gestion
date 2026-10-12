@@ -248,7 +248,7 @@ class Securite(Base):
         self.assertIsNone(r["preview_id"])
         r = self.importer("personnel", "en_cours", contenu, uid=7)        # RH
         self.assertEqual(db.tout("personnel")[0]["salary"]["amount"], 45000)
-        masque = SV.lignes_lot(r["lot"]["id"], "finance")["Personnel"][0]
+        masque = SV.lignes_lot(r["lot"]["id"], auth.DROITS["finance"])["Personnel"][0]
         self.assertEqual(masque["salaire_base"], "<confidentiel>")
 
 
@@ -270,7 +270,7 @@ class Reprise(Base):
         apres = (self.count("movements"), len(V.records("entry")), V.records("budget")[0]["data"], V.balance(db.un("v7_records", a)))
         self.assertEqual(avant, apres)
         self.assertEqual(V.records("carryover"), [])
-        self.assertEqual(len(SV.lignes_lot(r["lot"]["id"], "admin")["Factures_Fournisseurs"]), 1)
+        self.assertEqual(len(SV.lignes_lot(r["lot"]["id"], auth.DROITS["admin"])["Factures_Fournisseurs"]), 1)
 
     def test_facture_1000_payee_600_reliquat_400_sans_redebit(self):
         self.budget_approuve()
