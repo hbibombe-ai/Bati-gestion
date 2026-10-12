@@ -1,0 +1,146 @@
+diff -ruN src/ui.py src_new/ui.py
+--- src/ui.py	2026-10-12 14:18:10.859814716 +0100
++++ src_new/ui.py	2026-10-12 14:18:10.877621343 +0100
+@@ -41,73 +41,81 @@
+ 
+ STYLE = """
+ <style>
+-[data-testid="stMetric"]{background:#fff;border:1px solid #dce4ed;border-radius:10px;padding:16px 18px}
+-[data-testid="stMetric"].accent, .bg-accent [data-testid="stMetric"]{border-top:4px solid #efa63a}
+-[data-testid="stMetricValue"]{font-size:1.45rem;letter-spacing:-.5px}
+-[data-testid="stSidebarNav"] a[aria-current="page"]{box-shadow:inset 3px 0 0 #ffb347}
+-[data-testid="stSidebarNavSeparator"]{border-color:#29445f}
+-h1{letter-spacing:-1px}
+-.bg-sous{color:#5b6e83;margin:-.6rem 0 1.1rem 0;font-size:.98rem}
+-.bg-montants{font-variant-numeric:tabular-nums;line-height:1.55}
+-.bg-montants b{font-size:1.25rem;letter-spacing:-.3px}
+-.bg-carte{background:#fff;border:1px solid #dce4ed;border-radius:10px;padding:16px 18px;height:100%}
+-.bg-carte.accent{border-top:4px solid #efa63a}
+-.bg-carte .t{font-size:.9rem;color:#33475e;margin-bottom:.35rem}
+-.bg-carte .n{font-size:1.7rem;font-weight:700;letter-spacing:-1px}
+-.bg-carte .m{color:#5b6e83;font-size:.85rem}
+-.bg-tag{display:inline-block;background:#eaf1f8;border-radius:4px;padding:2px 8px;font-size:.82rem;margin:1px 2px}
+-.bg-tag.ok{background:#e1f5eb;color:#176846}.bg-tag.alerte{background:#fdecea;color:#a62d25}
+-:focus-visible{outline:3px solid #dc831c !important;outline-offset:2px}
+-
+-/* ---- Hiérarchie : titres, sous-titres, séparateurs */
+-.block-container{padding-top:2.2rem;padding-bottom:3rem;max-width:1400px}
+-h1{font-size:2rem;color:#112740}
+-h2,h3{color:#183653;letter-spacing:-.3px}
+-hr{margin:1.4rem 0;opacity:.6}
+-.bg-sous{font-size:1rem;color:#4f6276;margin:-.4rem 0 1.4rem 0;max-width:820px}
+-
+-/* ---- Onglets : soulignement ambre sur l'onglet actif */
+-[data-baseweb="tab-list"]{gap:4px;border-bottom:1px solid #d3dce6}
+-[data-baseweb="tab"]{background:transparent;border-radius:8px 8px 0 0;padding:.55rem 1rem;color:#4f6276;font-weight:600}
+-[data-baseweb="tab"][aria-selected="true"]{color:#112740}
+-[data-baseweb="tab-highlight"]{background:#efa63a !important;height:3px !important}
+-[data-baseweb="tab-border"]{display:none}
+-[data-baseweb="tab"][aria-selected="true"]{font-weight:700;box-shadow:inset 0 -3px 0 #efa63a}
++/* ===== Jetons de couleur (charte Bâti Gestion) ===== */
++:root{--bg-navy:#112740;--bg-navy-2:#183653;--ambre:#efa63a;--ambre-clair:#ffb347;--bord:#dce4ed;--texte:#172b43;--doux:#5b6e83;--fond:#f2f5f8}
+ 
+-/* ---- Boutons : principal bleu nuit, secondaire discret, arrondis cohérents */
+-[data-testid^="stBaseButton"]{border-radius:8px;font-weight:600;transition:background .15s,border-color .15s,box-shadow .15s}
+-[data-testid="stBaseButton-primary"]{background:#183653;border-color:#183653;color:#fff}
+-[data-testid="stBaseButton-primary"]:hover{background:#112740;border-color:#112740;box-shadow:0 2px 6px rgba(17,39,64,.25)}
+-[data-testid="stBaseButton-secondary"]{background:#fff;border-color:#c9d4e0;color:#183653}
+-[data-testid="stBaseButton-secondary"]:hover{border-color:#183653;background:#f5f8fb}
+-[data-testid="stBaseButton-secondary"]:disabled,[data-testid="stBaseButton-primary"]:disabled{opacity:.45}
+-
+-/* ---- Champs de saisie : bordures et focus plus nets */
+-[data-baseweb="input"],[data-baseweb="select"]>div,[data-baseweb="textarea"]{border-radius:8px !important;border-color:#c9d4e0 !important}
+-[data-baseweb="input"]:focus-within,[data-baseweb="select"]>div:focus-within{border-color:#183653 !important;box-shadow:0 0 0 1px #183653}
+-
+-/* ---- Tableaux et listes */
+-[data-testid="stDataFrame"]{border:1px solid #dce4ed;border-radius:10px;overflow:hidden;background:#fff}
+-[data-testid="stDataFrame"] [role="columnheader"]{background:#eef3f8;color:#172b43;font-weight:700}
++/* ===== Mise en page et apparition douce ===== */
++.block-container{padding-top:2rem;padding-bottom:3rem;max-width:1400px}
++@keyframes bgApparition{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
++[data-testid="stMainBlockContainer"]{animation:bgApparition .4s cubic-bezier(.2,.7,.2,1) both}
++@media (prefers-reduced-motion: reduce){[data-testid="stMainBlockContainer"]{animation:none}*{transition:none !important}}
++
++/* ===== Titres : hiérarchie et filet ambre ===== */
++h1{font-size:2.05rem;font-weight:800;letter-spacing:-.6px;color:var(--bg-navy);margin-bottom:.15rem;display:inline-block;padding-bottom:.4rem;background:linear-gradient(var(--ambre),var(--ambre)) no-repeat left bottom / 44px 4px}
++h2,h3{color:var(--bg-navy-2);letter-spacing:-.3px}
++.bg-sous{font-size:1rem;color:var(--doux);margin:.85rem 0 1.5rem 0;max-width:820px;line-height:1.5}
++
++/* ===== Barre latérale : sections en capitales, liens arrondis ===== */
++[data-testid="stNavSectionHeader"]{padding:0 14px;margin:1.1rem 0 .25rem 0 !important}
++[data-testid="stNavSectionHeader"] p,[data-testid="stNavSectionHeader"] span{font-size:.7rem !important;font-weight:700 !important;letter-spacing:.12em;text-transform:uppercase;color:#7f95ab !important}
++[data-testid="stSidebarNavLink"]{border-radius:10px;margin:2px 8px;transition:background .15s ease,color .15s ease}
++[data-testid="stSidebarNavLink"]:hover{background:rgba(255,179,71,.10)}
++[data-testid="stSidebarNavLink"][aria-current="page"]{background:rgba(255,179,71,.14);box-shadow:inset 3px 0 0 var(--ambre-clair)}
++[data-testid="stSidebar"] hr{border-color:#29445f;opacity:.7}
++
++/* ===== Onglets : pastille ambre sous l'onglet actif ===== */
++[data-baseweb="tab-list"]{gap:6px;border-bottom:1px solid var(--bord)}
++[data-baseweb="tab"]{background:transparent;border-radius:10px 10px 0 0;padding:.6rem 1.05rem;color:var(--doux);font-weight:600;transition:color .15s ease,background .15s ease}
++[data-baseweb="tab"]:hover{color:var(--bg-navy);background:rgba(17,39,64,.04)}
++[data-baseweb="tab"][aria-selected="true"]{color:var(--bg-navy);font-weight:700;box-shadow:inset 0 -3px 0 var(--ambre)}
++[data-baseweb="tab-highlight"]{background:var(--ambre) !important;height:3px !important}
++[data-baseweb="tab-border"]{display:none}
+ 
+-/* ---- Messages */
+-[data-testid="stAlert"]{border-radius:10px;border:1px solid #dce4ed}
++/* ===== Boutons : principal bleu nuit avec relief au survol ===== */
++[data-testid^="stBaseButton"]{border-radius:10px;font-weight:600;transition:background .18s ease,border-color .18s ease,box-shadow .18s ease,transform .18s ease}
++[data-testid="stBaseButton-primary"]{background:var(--bg-navy-2);border-color:var(--bg-navy-2);color:#fff;box-shadow:0 1px 2px rgba(17,39,64,.18)}
++[data-testid="stBaseButton-primary"]:hover{background:var(--bg-navy);border-color:var(--bg-navy);box-shadow:0 6px 18px rgba(17,39,64,.22);transform:translateY(-1px)}
++[data-testid="stBaseButton-primary"]:active{transform:translateY(0)}
++[data-testid="stBaseButton-secondary"]{background:#fff;border-color:#c9d4e0;color:var(--bg-navy-2)}
++[data-testid="stBaseButton-secondary"]:hover{border-color:var(--bg-navy-2);background:#f5f8fb;box-shadow:0 2px 8px rgba(17,39,64,.08)}
++[data-testid^="stBaseButton"]:disabled{opacity:.45;transform:none}
++:focus-visible{outline:2px solid var(--ambre) !important;outline-offset:2px}
++
++/* ===== Champs de saisie ===== */
++[data-baseweb="input"],[data-baseweb="select"]>div,[data-baseweb="textarea"]{border-radius:10px !important;border-color:#c9d4e0 !important;background:#fff}
++[data-baseweb="input"]:focus-within,[data-baseweb="select"]>div:focus-within,[data-baseweb="textarea"]:focus-within{border-color:var(--bg-navy-2) !important;box-shadow:0 0 0 3px rgba(24,54,83,.12)}
++
++/* ===== Cartes : métriques, formulaires, blocs repliables ===== */
++[data-testid="stMetric"]{background:#fff;border:1px solid var(--bord);border-radius:14px;padding:16px 18px;box-shadow:0 1px 2px rgba(17,39,64,.04),0 6px 18px rgba(17,39,64,.05);transition:transform .2s ease,box-shadow .2s ease}
++[data-testid="stMetric"]:hover{transform:translateY(-2px);box-shadow:0 2px 4px rgba(17,39,64,.06),0 12px 26px rgba(17,39,64,.09)}
++[data-testid="stMetricLabel"]{color:var(--doux);font-weight:600}
++[data-testid="stMetricValue"]{font-size:1.45rem;letter-spacing:-.5px;color:var(--bg-navy)}
++[data-testid="stForm"]{border:1px solid var(--bord);border-radius:14px;background:#fff;padding:1rem 1.15rem;box-shadow:0 1px 2px rgba(17,39,64,.04)}
++[data-testid="stExpander"]{border:1px solid var(--bord);border-radius:14px;background:#fff;overflow:hidden;box-shadow:0 1px 2px rgba(17,39,64,.03)}
++[data-testid="stExpander"] summary{font-weight:600;color:var(--bg-navy-2)}
++
++/* ===== Tableaux et messages ===== */
++[data-testid="stDataFrame"]{border:1px solid var(--bord);border-radius:14px;overflow:hidden;background:#fff;box-shadow:0 1px 2px rgba(17,39,64,.04),0 6px 18px rgba(17,39,64,.04)}
++[data-testid="stDataFrame"] [role="columnheader"]{background:#eef3f8;color:var(--texte);font-weight:700}
++[data-testid="stAlert"]{border-radius:12px;border:1px solid var(--bord);box-shadow:0 1px 2px rgba(17,39,64,.03)}
+ [data-testid="stAlert"] p{font-size:.95rem}
+ 
+-/* ---- Blocs repliables et formulaires */
+-[data-testid="stExpander"]{border:1px solid #dce4ed;border-radius:10px;background:#fff;overflow:hidden}
+-[data-testid="stExpander"] summary{font-weight:600;color:#183653}
+-[data-testid="stForm"]{border:1px solid #dce4ed;border-radius:10px;background:#fff;padding:1rem 1.1rem}
+-
+-/* ---- Barre latérale : libellés de section discrets */
+-[data-testid="stSidebarNavSeparator"]{margin:.9rem 0 .3rem 0}
+-[data-testid="stSidebarNavSeparator"] + div{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:#8ea3b8}
+-[data-testid="stSidebarNavLink"]{border-radius:8px;margin:1px 6px}
+-[data-testid="stSidebarNavLink"]:hover{background:rgba(255,179,71,.09)}
++/* ===== Repères de statut (chiffres clés et étiquettes) ===== */
++.bg-tag{display:inline-block;background:#fff;border:1px solid var(--bord);border-radius:999px;padding:5px 12px;font-size:.84rem;color:var(--texte);margin:2px 6px 2px 0;box-shadow:0 1px 2px rgba(17,39,64,.04)}
++.bg-tag b{color:var(--bg-navy)}
++.bg-tag.ok{background:#e6f6ee;border-color:#bfe6cf;color:#176846}
++.bg-tag.alerte{background:#fdeeec;border-color:#f3c4bf;color:#a62d25}
++.bg-carte{background:#fff;border:1px solid var(--bord);border-radius:14px;padding:16px 18px;height:100%;box-shadow:0 1px 2px rgba(17,39,64,.04),0 6px 18px rgba(17,39,64,.05)}
++.bg-carte.accent{border-top:4px solid var(--ambre)}
++.bg-carte .t{font-size:.9rem;color:var(--texte);margin-bottom:.35rem;font-weight:600}
++.bg-carte .n{font-size:1.7rem;font-weight:800;letter-spacing:-1px;color:var(--bg-navy)}
++.bg-carte .m{color:var(--doux);font-size:.85rem}
++.bg-montants{font-variant-numeric:tabular-nums;line-height:1.55}
++.bg-montants b{font-size:1.25rem;letter-spacing:-.3px}
+ 
+-/* ---- Petits écrans : marges de 16 px, pas de défilement horizontal */
++/* ===== Petits écrans : marges de 16 px, pas de défilement horizontal ===== */
+ @media (max-width: 760px){
+- .block-container{padding-left:16px;padding-right:16px;padding-top:1.2rem}
++ [data-testid="stMainBlockContainer"].block-container{padding-left:16px;padding-right:16px;padding-top:4.8rem}
+  h1{font-size:1.6rem}
+  [data-testid="stHorizontalBlock"]{flex-wrap:wrap}
+  [data-testid="stMetricValue"]{font-size:1.2rem}

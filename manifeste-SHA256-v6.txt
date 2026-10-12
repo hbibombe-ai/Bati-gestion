@@ -1,0 +1,2 @@
+2e2c6e5caf5c0c470723eadacd3e70dd8b886f16c5b51bbe4dc57ea5e7f166e8  BatiGestion_V8_BG-ADM-002_design.zip
+c7f7ca6450f204f104e9b3430338a0fcdd3b57feaf7544ba19c280c40ae5a4e0  BG-design.patch
