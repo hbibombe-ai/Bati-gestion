@@ -1,0 +1,2 @@
+7cde75388aecc85bc9d4c0aaba2806e75441f93ed362511842c5873a9f58c16d  BatiGestion_V8_BG-ADM-002_modif_facture_admin.zip
+df980fec7498e578da0e57c786c95f58caef6b7f38c39a42c3b8561d7969e446  BG-modif-facture-admin.patch

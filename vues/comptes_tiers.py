@@ -51,6 +51,9 @@ def facture_fournisseur() -> None:
 
 @st.dialog("Modifier la facture fournisseur", width="large")
 def modifier_facture(facture_id: str) -> None:
+    if not auth.est_admin():
+        st.error("La modification d’une facture fournisseur est réservée à l’administrateur.")
+        return
     s = R.charger("clients", "projects", "supplier_invoices", "supplier_allocations", "supplier_reversals")
     i = next((x for x in s["supplier_invoices"] if x["id"] == facture_id), None)
     if i is None:
@@ -332,7 +335,7 @@ def page() -> None:
             if i is not None:
                 x = next(y for y in factures if y["id"] == lf[i]["_id"])
                 b_mod, b_pay = ui.rangee(2)
-                if b_mod.button(f"Modifier {x['reference']}", icon=":material/edit:"):
+                if auth.est_admin() and b_mod.button(f"Modifier {x['reference']}", icon=":material/edit:"):
                     modifier_facture(x["id"])
                 if x["amount"] - R.supplier_paid(s, x["id"]) > 0 and b_pay.button(
                         f"Règlement effectué sur {x['reference']}", type="primary"):

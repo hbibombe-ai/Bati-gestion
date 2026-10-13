@@ -303,6 +303,11 @@ def modifie(module: str) -> bool:
     return droit(module) == "w"
 
 
+def est_admin() -> bool:
+    """Vrai pour le rôle administrateur (direction générale) uniquement."""
+    return (utilisateur() or {}).get("role") == "admin"
+
+
 def exiger(module: str) -> None:
     """À placer en tête de page : arrête l'affichage si le rôle n'a pas accès au module."""
     if not voit(module):

@@ -11,13 +11,13 @@ from streamlit.testing.v1 import AppTest
 RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def _dialogue(facture_id):
+def _dialogue(facture_id, role="admin"):
     import os as _os
     import sys as _s
     _s.path.insert(0, _os.environ["BG_RACINE"])
     import streamlit as st
     from vues import comptes_tiers
-    st.session_state["utilisateur"] = {"id": 1, "identifiant": "admin", "nom": "Admin", "role": "admin",
+    st.session_state["utilisateur"] = {"id": 1, "identifiant": role, "nom": role.title(), "role": role,
                                        "doit_changer_mdp": False}
     comptes_tiers.modifier_facture(facture_id)
 
@@ -48,9 +48,9 @@ class ModifierFactureEcran(unittest.TestCase):
         self.p.stop()
         self.engine.dispose()
 
-    def _ouvrir(self, facture_id):
+    def _ouvrir(self, facture_id, role="admin"):
         os.environ["BG_RACINE"] = RACINE
-        at = AppTest.from_function(_dialogue, args=(facture_id,), default_timeout=60)
+        at = AppTest.from_function(_dialogue, args=(facture_id, role), default_timeout=60)
         at.run()
         self.assertFalse(at.exception, f"{at.exception}")
         return at
@@ -86,6 +86,14 @@ class ModifierFactureEcran(unittest.TestCase):
         self._enregistrer(at)
         self.assertTrue(any("inférieur au total déjà réglé" in e.value for e in at.error))
         self.assertEqual(self._reference("sf1"), "FR-1")
+
+    def test_non_administrateur_ne_peut_pas_modifier(self):
+        for role in ("finance", "chantier", "lecteur"):
+            with self.subTest(role=role):
+                at = self._ouvrir("sf1", role=role)
+                self.assertTrue(any("réservée à l’administrateur" in e.value for e in at.error))
+                self.assertFalse(any(t.label.startswith("Référence") for t in at.text_input))
+                self.assertEqual(self._reference("sf1"), "FR-1")
 
     def test_facture_reglee_reference_modifiable(self):
         import db
