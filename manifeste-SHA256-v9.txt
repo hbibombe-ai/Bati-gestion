@@ -1,0 +1,2 @@
+1a428d666718be1aae76bb2c55bc9c4918b6018dfaab626eff968d00d6798598  BatiGestion_V8_BG-ADM-002_piece_jointe_facture_fournisseur.zip
+0cd29f00c91902fc1e9c896e9a750798939e4c764b3cdfd53866112b8b91de34  BG-piece-jointe-facture-fournisseur.patch

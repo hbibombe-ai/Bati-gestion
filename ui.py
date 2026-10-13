@@ -186,7 +186,7 @@ def pieces_jointes(entite: str, entite_id: str, peut_ajouter: bool, titre: str =
             b.caption(f"{r['taille'] // 1024} Ko · {str(r['ajoute_le'])[:10]}")
             with c:
                 contenu = db.requete("select contenu from pieces_jointes where id = :i", i=r["id"])[0]["contenu"]
-                ui.telecharger("Ouvrir", contenu, r["nom"], r["mime"], key=f"pj_dl_{r['id']}")
+                telecharger("Ouvrir", contenu, r["nom"], r["mime"], key=f"pj_dl_{r['id']}")
                 if peut_ajouter and (dg or r["ajoute_par"] == moi) and st.button("Retirer", key=f"pj_del_{r['id']}",
                                                                                    icon=":material/delete:"):
                     with db.transaction(f"Retrait du document {r['nom']}") as t:

@@ -29,6 +29,10 @@ def facture_fournisseur() -> None:
         projet = ui.choix("Chantier *", ui.options_chantiers(s), "sf_p", "", vide="Choisir")
         montant = ui.montant("Montant total *", "sf_mt", 0)
         due = ui.date_txt("Échéance *", "sf_due")
+    # Identifiant réservé : les pièces jointes sont liées à la facture dès leur ajout, avant l'enregistrement
+    cible = st.session_state.setdefault("sf_id_new", db.nouvel_id())
+    ui.pieces_jointes("supplier_invoice", cible, peut_ajouter=True,
+                      titre="Pièces jointes (facture, bon de commande, bordereau…)")
     if st.button("Enregistrer", type="primary"):
         try:
             mt = R.cents(montant, "Montant", positif=True)
@@ -40,12 +44,13 @@ def facture_fournisseur() -> None:
                 raise ValueError("Cette facture existe déjà pour ce fournisseur.")
             V.guard_legacy(projet)
             with db.transaction(f"Facture fournisseur {ref.strip()}") as t:
-                t.inserer("supplier_invoices", {"id": db.nouvel_id(), "party_id": tiers, "project": projet,
+                t.inserer("supplier_invoices", {"id": cible, "party_id": tiers, "project": projet,
                                                 "reference": ref.strip(), "date": date, "due": due, "currency": monnaie,
                                                 "amount": mt})
         except ValueError as e:
             st.error(str(e))
         else:
+            st.session_state.pop("sf_id_new", None)
             ui.succes("Facture fournisseur enregistrée, sans mouvement de trésorerie.")
 
 
@@ -340,6 +345,8 @@ def page() -> None:
                 if x["amount"] - R.supplier_paid(s, x["id"]) > 0 and b_pay.button(
                         f"Règlement effectué sur {x['reference']}", type="primary"):
                     versement(x["id"])
+                ui.pieces_jointes("supplier_invoice", x["id"], peut_ajouter=ecrit,
+                                  titre=f"Pièces jointes à {x['reference']}")
         else:
             st.caption("Aucune facture fournisseur saisie pour ces critères.")
         st.markdown("##### Avances et paiements enregistrés")

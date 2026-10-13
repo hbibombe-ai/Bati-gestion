@@ -1,0 +1,593 @@
+diff -ruN src/auth.py src_new/auth.py
+--- src/auth.py	2026-10-13 12:34:24.248180849 +0100
++++ src_new/auth.py	2026-10-13 12:34:24.257449485 +0100
+@@ -303,6 +303,11 @@
+     return droit(module) == "w"
+ 
+ 
++def est_admin() -> bool:
++    """Vrai pour le rôle administrateur (direction générale) uniquement."""
++    return (utilisateur() or {}).get("role") == "admin"
++
++
+ def exiger(module: str) -> None:
+     """À placer en tête de page : arrête l'affichage si le rôle n'a pas accès au module."""
+     if not voit(module):
+diff -ruN src/regles.py src_new/regles.py
+--- src/regles.py	2026-10-13 12:34:24.248109985 +0100
++++ src_new/regles.py	2026-10-13 12:34:24.257420867 +0100
+@@ -349,6 +349,39 @@
+     return p["amount"] - sum(a["amount"] for a in s.get("supplier_allocations", []) if a["payment_id"] == payment_id)
+ 
+ 
++CHAMPS_FIGES_FOURNISSEUR = ("party_id", "project", "currency", "date")
++
++
++def valider_modif_facture_fournisseur(s: dict, facture_id: str, nouvelles: dict) -> None:
++    """Règles de modification d'une facture fournisseur. Lève ValueError si la modification est refusée.
++
++    Sans règlement : tous les champs sont modifiables. Avec règlement : tiers, chantier, monnaie et date
++    sont figés, et le montant ne peut pas descendre sous le total déjà réglé."""
++    i = next((x for x in s["supplier_invoices"] if x["id"] == facture_id), None)
++    if i is None:
++        raise ValueError("Facture introuvable.")
++    ref = str(nouvelles.get("reference", "")).strip()
++    if not ref:
++        raise ValueError("La référence est obligatoire.")
++    if not is_date(nouvelles.get("date")) or not is_date(nouvelles.get("due")):
++        raise ValueError("Indiquez une date de facture et une échéance valides.")
++    if nouvelles["due"] < nouvelles["date"]:
++        raise ValueError("L’échéance doit être postérieure à la date de facture.")
++    if nouvelles["amount"] <= 0:
++        raise ValueError("Le montant doit être positif.")
++    if any(x["id"] != facture_id and x["party_id"] == nouvelles["party_id"]
++           and x["reference"].strip().lower() == ref.lower() for x in s["supplier_invoices"]):
++        raise ValueError("Cette facture existe déjà pour ce fournisseur.")
++    paye = supplier_paid(s, facture_id)
++    if paye:
++        if any(nouvelles[c] != i[c] for c in CHAMPS_FIGES_FOURNISSEUR):
++            raise ValueError("Cette facture a déjà reçu des règlements : le fournisseur, le chantier, la monnaie et la "
++                             "date ne peuvent plus être modifiés.")
++        if nouvelles["amount"] < paye:
++            raise ValueError(f"Le montant ne peut pas être inférieur au total déjà réglé "
++                             f"({money(paye, i['currency'])}).")
++
++
+ # ------------------------------------------------------------------ rapports
+ def erp_forecast(s: dict, as_of: str) -> dict:
+     res = {c: {"balance": 0, "overdueIn": 0, "overdueOut": 0, "undatedIn": 0,
+diff -ruN src/tests/test_modif_facture_ecran.py src_new/tests/test_modif_facture_ecran.py
+--- src/tests/test_modif_facture_ecran.py	1970-01-01 01:00:00.000000000 +0100
++++ src_new/tests/test_modif_facture_ecran.py	2026-10-13 12:34:24.256861683 +0100
+@@ -0,0 +1,173 @@
++"""Boîte « Modifier la facture fournisseur » rendue avec Streamlit AppTest (base SQLite temporaire)."""
++import os
++import sys
++import unittest
++from unittest.mock import patch
++
++from sqlalchemy import create_engine
++from sqlalchemy.pool import StaticPool
++from streamlit.testing.v1 import AppTest
++
++RACINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++
++
++def _dialogue(facture_id, role="admin"):
++    import os as _os
++    import sys as _s
++    _s.path.insert(0, _os.environ["BG_RACINE"])
++    import streamlit as st
++    from vues import comptes_tiers
++    st.session_state["utilisateur"] = {"id": 1, "identifiant": role, "nom": role.title(), "role": role,
++                                       "doit_changer_mdp": False}
++    comptes_tiers.modifier_facture(facture_id)
++
++
++class ModifierFactureEcran(unittest.TestCase):
++    def setUp(self):
++        import db
++        self.engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
++        db.meta.create_all(self.engine)
++        self.p = patch.object(db, "moteur", lambda: self.engine)
++        self.p.start()
++        import sqlalchemy as sa
++        with self.engine.begin() as c:
++            c.execute(db.users.insert().values(id=1, identifiant="admin", nom="Admin", role="admin", mdp_hash="x",
++                                               actif=True, doit_changer_mdp=False, version_session=0))
++            c.execute(db.projects.insert().values(id="p", name="Projet", currency="USD", status="En cours",
++                                                  client="", budget=10000000, progress=0))
++            c.execute(db.clients.insert().values(id="f", code="F001", name="Quincaillerie", roles=["supplier"]))
++            c.execute(db.supplier_invoices.insert().values(id="sf1", party_id="f", project="p", reference="FR-1",
++                                                           date="2026-10-01", due="2026-10-30", currency="USD",
++                                                           amount=10000))
++            c.execute(db.supplier_invoices.insert().values(id="sf2", party_id="f", project="p", reference="FR-2",
++                                                           date="2026-10-02", due="2026-11-01", currency="USD",
++                                                           amount=5000))
++        self.sa = sa
++
++    def tearDown(self):
++        self.p.stop()
++        self.engine.dispose()
++
++    def _ouvrir(self, facture_id, role="admin"):
++        os.environ["BG_RACINE"] = RACINE
++        at = AppTest.from_function(_dialogue, args=(facture_id, role), default_timeout=60)
++        at.run()
++        self.assertFalse(at.exception, f"{at.exception}")
++        return at
++
++    def _enregistrer(self, at):
++        bouton = next(b for b in at.button if b.label == "Enregistrer les modifications")
++        bouton.click()
++        at.run()
++        self.assertFalse(at.exception, f"{at.exception}")
++        return at
++
++    def _reference(self, facture_id):
++        import db
++        with self.engine.connect() as c:
++            return c.execute(db.supplier_invoices.select().where(db.supplier_invoices.c.id == facture_id)).one().reference
++
++    def test_facture_non_reglee_reference_modifiee(self):
++        at = self._ouvrir("sf1")
++        next(t for t in at.text_input if t.label.startswith("Référence")).input("FR-1-C")
++        self._enregistrer(at)
++        self.assertEqual(self._reference("sf1"), "FR-1-C")
++
++    def test_facture_reglee_montant_inferieur_refuse(self):
++        import db
++        with self.engine.begin() as c:
++            c.execute(db.supplier_payments.insert().values(id="pay1", party_id="f", project="p", currency="USD",
++                                                           amount=6000, date="2026-10-05", account="bank"))
++            c.execute(db.supplier_allocations.insert().values(id="al1", payment_id="pay1", invoice_id="sf1",
++                                                              amount=6000, date="2026-10-05"))
++        at = self._ouvrir("sf1")
++        montant = next(n for n in at.number_input if n.label.startswith("Montant total"))
++        montant.set_value(50.0)  # 50,00 : inférieur au réglé de 60,00
++        self._enregistrer(at)
++        self.assertTrue(any("inférieur au total déjà réglé" in e.value for e in at.error))
++        self.assertEqual(self._reference("sf1"), "FR-1")
++
++    def test_non_administrateur_ne_peut_pas_modifier(self):
++        for role in ("finance", "chantier", "lecteur"):
++            with self.subTest(role=role):
++                at = self._ouvrir("sf1", role=role)
++                self.assertTrue(any("réservée à l’administrateur" in e.value for e in at.error))
++                self.assertFalse(any(t.label.startswith("Référence") for t in at.text_input))
++                self.assertEqual(self._reference("sf1"), "FR-1")
++
++    def test_facture_reglee_reference_modifiable(self):
++        import db
++        with self.engine.begin() as c:
++            c.execute(db.supplier_payments.insert().values(id="pay2", party_id="f", project="p", currency="USD",
++                                                           amount=2000, date="2026-10-05", account="bank"))
++            c.execute(db.supplier_allocations.insert().values(id="al2", payment_id="pay2", invoice_id="sf2",
++                                                              amount=2000, date="2026-10-05"))
++        at = self._ouvrir("sf2")
++        next(t for t in at.text_input if t.label.startswith("Référence")).input("FR-2-C")
++        self._enregistrer(at)
++        self.assertEqual(self._reference("sf2"), "FR-2-C")
++
++
++def _creer(role="admin"):
++    import os as _os
++    import sys as _s
++    _s.path.insert(0, _os.environ["BG_RACINE"])
++    import streamlit as st
++    from vues import comptes_tiers
++    st.session_state["utilisateur"] = {"id": 1, "identifiant": role, "nom": role.title(), "role": role,
++                                       "doit_changer_mdp": False}
++    comptes_tiers.facture_fournisseur()
++
++
++class CreerFactureAvecPieceJointe(unittest.TestCase):
++    def setUp(self):
++        import db
++        self.engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
++        db.meta.create_all(self.engine)
++        self.p = patch.object(db, "moteur", lambda: self.engine)
++        self.p.start()
++        with self.engine.begin() as c:
++            c.execute(db.users.insert().values(id=1, identifiant="admin", nom="Admin", role="admin", mdp_hash="x",
++                                               actif=True, doit_changer_mdp=False, version_session=0))
++            c.execute(db.projects.insert().values(id="p", name="Projet", currency="USD", status="En cours",
++                                                  client="", budget=10000000, progress=0))
++            c.execute(db.clients.insert().values(id="f", code="F001", name="Quincaillerie", roles=["supplier"]))
++
++    def tearDown(self):
++        self.p.stop()
++        self.engine.dispose()
++
++    def test_piece_jointe_rattachee_a_la_nouvelle_facture(self):
++        import datetime as dt
++        import hashlib
++        import db
++        os.environ["BG_RACINE"] = RACINE
++        at = AppTest.from_function(_creer, args=("finance",), default_timeout=60)
++        at.run()
++        self.assertFalse(at.exception, f"{at.exception}")
++        cible = at.session_state["sf_id_new"]
++        # Simule l'ajout d'un bon de commande (le téléversement lui-même est couvert par test_pieces_jointes)
++        contenu = b"%PDF-1.4 test"
++        with self.engine.begin() as c:
++            c.execute(db.pieces_jointes.insert().values(
++                id="pj1", entite="supplier_invoice", entite_id=cible, libelle="Bon de commande", nom="bc.pdf",
++                mime="application/pdf", taille=len(contenu), sha256=hashlib.sha256(contenu).hexdigest(),
++                contenu=contenu, ajoute_par=1, ajoute_le=dt.datetime(2026, 10, 13)))
++        at.run()
++        at.selectbox(key="sf_t").set_value("f")
++        at.selectbox(key="sf_p").set_value("p")
++        next(t for t in at.text_input if t.label.startswith("Référence")).input("FR-9")
++        next(n for n in at.number_input if n.label.startswith("Montant total")).set_value(150.0)
++        next(b for b in at.button if b.label == "Enregistrer").click()
++        at.run()
++        self.assertFalse(at.exception, f"{at.exception}")
++        self.assertEqual([e.value for e in at.error], [])
++        with self.engine.connect() as c:
++            facture = c.execute(db.supplier_invoices.select().where(db.supplier_invoices.c.reference == "FR-9")).one()
++            pj = c.execute(db.pieces_jointes.select().where(db.pieces_jointes.c.id == "pj1")).one()
++        self.assertEqual(facture.id, cible)
++        self.assertEqual(pj.entite_id, facture.id)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff -ruN src/tests/test_modif_facture_fournisseur.py src_new/tests/test_modif_facture_fournisseur.py
+--- src/tests/test_modif_facture_fournisseur.py	1970-01-01 01:00:00.000000000 +0100
++++ src_new/tests/test_modif_facture_fournisseur.py	2026-10-13 12:34:24.256847518 +0100
+@@ -0,0 +1,97 @@
++"""Modification d'une facture fournisseur : règles de validation (sans et avec règlements)."""
++import unittest
++
++import regles as R
++
++
++def _base():
++    return {
++        "clients": [], "projects": [],
++        "supplier_invoices": [
++            {"id": "f1", "party_id": "p1", "project": "c1", "currency": "USD", "reference": "FR-1",
++             "date": "2026-10-01", "due": "2026-10-30", "amount": 10000},
++            {"id": "f2", "party_id": "p1", "project": "c1", "currency": "USD", "reference": "FR-2",
++             "date": "2026-10-02", "due": "2026-11-01", "amount": 5000},
++        ],
++        "supplier_payments": [{"id": "pay1", "party_id": "p1", "project": "c1", "currency": "USD",
++                               "amount": 6000, "date": "2026-10-05", "account": "bank"}],
++        "supplier_allocations": [],
++        "supplier_reversals": [],
++    }
++
++
++def _nouvelles(**changements):
++    base = {"party_id": "p1", "project": "c1", "currency": "USD", "reference": "FR-1",
++            "date": "2026-10-01", "due": "2026-10-30", "amount": 10000}
++    base.update(changements)
++    return base
++
++
++class ModificationSansReglement(unittest.TestCase):
++    def test_tous_les_champs_modifiables(self):
++        s = _base()
++        R.valider_modif_facture_fournisseur(s, "f1", _nouvelles(
++            reference="FR-1-BIS", date="2026-09-30", due="2026-11-15", amount=12000, project="c2", currency="EUR"))
++
++    def test_reference_obligatoire(self):
++        with self.assertRaisesRegex(ValueError, "référence"):
++            R.valider_modif_facture_fournisseur(_base(), "f1", _nouvelles(reference="  "))
++
++    def test_reference_en_double_pour_le_meme_fournisseur_refusee(self):
++        with self.assertRaisesRegex(ValueError, "existe déjà"):
++            R.valider_modif_facture_fournisseur(_base(), "f1", _nouvelles(reference="fr-2"))
++
++    def test_meme_reference_chez_un_autre_fournisseur_acceptee(self):
++        R.valider_modif_facture_fournisseur(_base(), "f1", _nouvelles(party_id="p9", reference="FR-2"))
++
++    def test_echeance_avant_date_refusee(self):
++        with self.assertRaisesRegex(ValueError, "échéance"):
++            R.valider_modif_facture_fournisseur(_base(), "f1", _nouvelles(due="2026-09-01"))
++
++    def test_montant_nul_refuse(self):
++        with self.assertRaisesRegex(ValueError, "positif"):
++            R.valider_modif_facture_fournisseur(_base(), "f1", _nouvelles(amount=0))
++
++    def test_paiement_contrepasse_ne_bloque_pas(self):
++        s = _base()
++        s["supplier_allocations"] = [{"payment_id": "pay1", "invoice_id": "f1", "amount": 6000, "date": "2026-10-05"}]
++        s["supplier_reversals"] = [{"payment_id": "pay1"}]
++        R.valider_modif_facture_fournisseur(s, "f1", _nouvelles(party_id="p9", amount=3000))
++
++
++class ModificationAvecReglement(unittest.TestCase):
++    def setUp(self):
++        self.s = _base()
++        self.s["supplier_allocations"] = [{"payment_id": "pay1", "invoice_id": "f1", "amount": 6000,
++                                           "date": "2026-10-05"}]
++
++    def test_reference_et_echeance_modifiables(self):
++        R.valider_modif_facture_fournisseur(self.s, "f1", _nouvelles(reference="FR-1-C", due="2026-12-01"))
++
++    def test_montant_superieur_au_regle_accepte(self):
++        R.valider_modif_facture_fournisseur(self.s, "f1", _nouvelles(amount=15000))
++
++    def test_montant_egal_au_regle_accepte(self):
++        R.valider_modif_facture_fournisseur(self.s, "f1", _nouvelles(amount=6000))
++
++    def test_montant_inferieur_au_regle_refuse(self):
++        with self.assertRaisesRegex(ValueError, "inférieur au total déjà réglé"):
++            R.valider_modif_facture_fournisseur(self.s, "f1", _nouvelles(amount=5999))
++
++    def test_changement_de_fournisseur_refuse(self):
++        with self.assertRaisesRegex(ValueError, "ne peuvent plus être modifiés"):
++            R.valider_modif_facture_fournisseur(self.s, "f1", _nouvelles(party_id="p9"))
++
++    def test_changement_de_chantier_monnaie_ou_date_refuse(self):
++        for changement in ({"project": "c2"}, {"currency": "EUR"}, {"date": "2026-09-30"}):
++            with self.subTest(changement=changement):
++                with self.assertRaisesRegex(ValueError, "ne peuvent plus être modifiés"):
++                    R.valider_modif_facture_fournisseur(self.s, "f1", _nouvelles(**changement))
++
++    def test_facture_inconnue_refusee(self):
++        with self.assertRaisesRegex(ValueError, "introuvable"):
++            R.valider_modif_facture_fournisseur(self.s, "inconnue", _nouvelles())
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff -ruN src/ui.py src_new/ui.py
+--- src/ui.py	2026-10-13 12:34:24.250446664 +0100
++++ src_new/ui.py	2026-10-13 12:34:24.257470903 +0100
+@@ -41,73 +41,81 @@
+ 
+ STYLE = """
+ <style>
+-[data-testid="stMetric"]{background:#fff;border:1px solid #dce4ed;border-radius:10px;padding:16px 18px}
+-[data-testid="stMetric"].accent, .bg-accent [data-testid="stMetric"]{border-top:4px solid #efa63a}
+-[data-testid="stMetricValue"]{font-size:1.45rem;letter-spacing:-.5px}
+-[data-testid="stSidebarNav"] a[aria-current="page"]{box-shadow:inset 3px 0 0 #ffb347}
+-[data-testid="stSidebarNavSeparator"]{border-color:#29445f}
+-h1{letter-spacing:-1px}
+-.bg-sous{color:#5b6e83;margin:-.6rem 0 1.1rem 0;font-size:.98rem}
+-.bg-montants{font-variant-numeric:tabular-nums;line-height:1.55}
+-.bg-montants b{font-size:1.25rem;letter-spacing:-.3px}
+-.bg-carte{background:#fff;border:1px solid #dce4ed;border-radius:10px;padding:16px 18px;height:100%}
+-.bg-carte.accent{border-top:4px solid #efa63a}
+-.bg-carte .t{font-size:.9rem;color:#33475e;margin-bottom:.35rem}
+-.bg-carte .n{font-size:1.7rem;font-weight:700;letter-spacing:-1px}
+-.bg-carte .m{color:#5b6e83;font-size:.85rem}
+-.bg-tag{display:inline-block;background:#eaf1f8;border-radius:4px;padding:2px 8px;font-size:.82rem;margin:1px 2px}
+-.bg-tag.ok{background:#e1f5eb;color:#176846}.bg-tag.alerte{background:#fdecea;color:#a62d25}
+-:focus-visible{outline:3px solid #dc831c !important;outline-offset:2px}
+-
+-/* ---- Hiérarchie : titres, sous-titres, séparateurs */
+-.block-container{padding-top:2.2rem;padding-bottom:3rem;max-width:1400px}
+-h1{font-size:2rem;color:#112740}
+-h2,h3{color:#183653;letter-spacing:-.3px}
+-hr{margin:1.4rem 0;opacity:.6}
+-.bg-sous{font-size:1rem;color:#4f6276;margin:-.4rem 0 1.4rem 0;max-width:820px}
+-
+-/* ---- Onglets : soulignement ambre sur l'onglet actif */
+-[data-baseweb="tab-list"]{gap:4px;border-bottom:1px solid #d3dce6}
+-[data-baseweb="tab"]{background:transparent;border-radius:8px 8px 0 0;padding:.55rem 1rem;color:#4f6276;font-weight:600}
+-[data-baseweb="tab"][aria-selected="true"]{color:#112740}
+-[data-baseweb="tab-highlight"]{background:#efa63a !important;height:3px !important}
+-[data-baseweb="tab-border"]{display:none}
+-[data-baseweb="tab"][aria-selected="true"]{font-weight:700;box-shadow:inset 0 -3px 0 #efa63a}
++/* ===== Jetons de couleur (charte Bâti Gestion) ===== */
++:root{--bg-navy:#112740;--bg-navy-2:#183653;--ambre:#efa63a;--ambre-clair:#ffb347;--bord:#dce4ed;--texte:#172b43;--doux:#5b6e83;--fond:#f2f5f8}
+ 
+-/* ---- Boutons : principal bleu nuit, secondaire discret, arrondis cohérents */
+-[data-testid^="stBaseButton"]{border-radius:8px;font-weight:600;transition:background .15s,border-color .15s,box-shadow .15s}
+-[data-testid="stBaseButton-primary"]{background:#183653;border-color:#183653;color:#fff}
+-[data-testid="stBaseButton-primary"]:hover{background:#112740;border-color:#112740;box-shadow:0 2px 6px rgba(17,39,64,.25)}
+-[data-testid="stBaseButton-secondary"]{background:#fff;border-color:#c9d4e0;color:#183653}
+-[data-testid="stBaseButton-secondary"]:hover{border-color:#183653;background:#f5f8fb}
+-[data-testid="stBaseButton-secondary"]:disabled,[data-testid="stBaseButton-primary"]:disabled{opacity:.45}
+-
+-/* ---- Champs de saisie : bordures et focus plus nets */
+-[data-baseweb="input"],[data-baseweb="select"]>div,[data-baseweb="textarea"]{border-radius:8px !important;border-color:#c9d4e0 !important}
+-[data-baseweb="input"]:focus-within,[data-baseweb="select"]>div:focus-within{border-color:#183653 !important;box-shadow:0 0 0 1px #183653}
+-
+-/* ---- Tableaux et listes */
+-[data-testid="stDataFrame"]{border:1px solid #dce4ed;border-radius:10px;overflow:hidden;background:#fff}
+-[data-testid="stDataFrame"] [role="columnheader"]{background:#eef3f8;color:#172b43;font-weight:700}
++/* ===== Mise en page et apparition douce ===== */
++.block-container{padding-top:2rem;padding-bottom:3rem;max-width:1400px}
++@keyframes bgApparition{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
++[data-testid="stMainBlockContainer"]{animation:bgApparition .4s cubic-bezier(.2,.7,.2,1) both}
++@media (prefers-reduced-motion: reduce){[data-testid="stMainBlockContainer"]{animation:none}*{transition:none !important}}
++
++/* ===== Titres : hiérarchie et filet ambre ===== */
++h1{font-size:2.05rem;font-weight:800;letter-spacing:-.6px;color:var(--bg-navy);margin-bottom:.15rem;display:inline-block;padding-bottom:.4rem;background:linear-gradient(var(--ambre),var(--ambre)) no-repeat left bottom / 44px 4px}
++h2,h3{color:var(--bg-navy-2);letter-spacing:-.3px}
++.bg-sous{font-size:1rem;color:var(--doux);margin:.85rem 0 1.5rem 0;max-width:820px;line-height:1.5}
++
++/* ===== Barre latérale : sections en capitales, liens arrondis ===== */
++[data-testid="stNavSectionHeader"]{padding:0 14px;margin:1.1rem 0 .25rem 0 !important}
++[data-testid="stNavSectionHeader"] p,[data-testid="stNavSectionHeader"] span{font-size:.7rem !important;font-weight:700 !important;letter-spacing:.12em;text-transform:uppercase;color:#7f95ab !important}
++[data-testid="stSidebarNavLink"]{border-radius:10px;margin:2px 8px;transition:background .15s ease,color .15s ease}
++[data-testid="stSidebarNavLink"]:hover{background:rgba(255,179,71,.10)}
++[data-testid="stSidebarNavLink"][aria-current="page"]{background:rgba(255,179,71,.14);box-shadow:inset 3px 0 0 var(--ambre-clair)}
++[data-testid="stSidebar"] hr{border-color:#29445f;opacity:.7}
++
++/* ===== Onglets : pastille ambre sous l'onglet actif ===== */
++[data-baseweb="tab-list"]{gap:6px;border-bottom:1px solid var(--bord)}
++[data-baseweb="tab"]{background:transparent;border-radius:10px 10px 0 0;padding:.6rem 1.05rem;color:var(--doux);font-weight:600;transition:color .15s ease,background .15s ease}
++[data-baseweb="tab"]:hover{color:var(--bg-navy);background:rgba(17,39,64,.04)}
++[data-baseweb="tab"][aria-selected="true"]{color:var(--bg-navy);font-weight:700;box-shadow:inset 0 -3px 0 var(--ambre)}
++[data-baseweb="tab-highlight"]{background:var(--ambre) !important;height:3px !important}
++[data-baseweb="tab-border"]{display:none}
+ 
+-/* ---- Messages */
+-[data-testid="stAlert"]{border-radius:10px;border:1px solid #dce4ed}
++/* ===== Boutons : principal bleu nuit avec relief au survol ===== */
++[data-testid^="stBaseButton"]{border-radius:10px;font-weight:600;transition:background .18s ease,border-color .18s ease,box-shadow .18s ease,transform .18s ease}
++[data-testid="stBaseButton-primary"]{background:var(--bg-navy-2);border-color:var(--bg-navy-2);color:#fff;box-shadow:0 1px 2px rgba(17,39,64,.18)}
++[data-testid="stBaseButton-primary"]:hover{background:var(--bg-navy);border-color:var(--bg-navy);box-shadow:0 6px 18px rgba(17,39,64,.22);transform:translateY(-1px)}
++[data-testid="stBaseButton-primary"]:active{transform:translateY(0)}
++[data-testid="stBaseButton-secondary"]{background:#fff;border-color:#c9d4e0;color:var(--bg-navy-2)}
++[data-testid="stBaseButton-secondary"]:hover{border-color:var(--bg-navy-2);background:#f5f8fb;box-shadow:0 2px 8px rgba(17,39,64,.08)}
++[data-testid^="stBaseButton"]:disabled{opacity:.45;transform:none}
++:focus-visible{outline:2px solid var(--ambre) !important;outline-offset:2px}
++
++/* ===== Champs de saisie ===== */
++[data-baseweb="input"],[data-baseweb="select"]>div,[data-baseweb="textarea"]{border-radius:10px !important;border-color:#c9d4e0 !important;background:#fff}
++[data-baseweb="input"]:focus-within,[data-baseweb="select"]>div:focus-within,[data-baseweb="textarea"]:focus-within{border-color:var(--bg-navy-2) !important;box-shadow:0 0 0 3px rgba(24,54,83,.12)}
++
++/* ===== Cartes : métriques, formulaires, blocs repliables ===== */
++[data-testid="stMetric"]{background:#fff;border:1px solid var(--bord);border-radius:14px;padding:16px 18px;box-shadow:0 1px 2px rgba(17,39,64,.04),0 6px 18px rgba(17,39,64,.05);transition:transform .2s ease,box-shadow .2s ease}
++[data-testid="stMetric"]:hover{transform:translateY(-2px);box-shadow:0 2px 4px rgba(17,39,64,.06),0 12px 26px rgba(17,39,64,.09)}
++[data-testid="stMetricLabel"]{color:var(--doux);font-weight:600}
++[data-testid="stMetricValue"]{font-size:1.45rem;letter-spacing:-.5px;color:var(--bg-navy)}
++[data-testid="stForm"]{border:1px solid var(--bord);border-radius:14px;background:#fff;padding:1rem 1.15rem;box-shadow:0 1px 2px rgba(17,39,64,.04)}
++[data-testid="stExpander"]{border:1px solid var(--bord);border-radius:14px;background:#fff;overflow:hidden;box-shadow:0 1px 2px rgba(17,39,64,.03)}
++[data-testid="stExpander"] summary{font-weight:600;color:var(--bg-navy-2)}
++
++/* ===== Tableaux et messages ===== */
++[data-testid="stDataFrame"]{border:1px solid var(--bord);border-radius:14px;overflow:hidden;background:#fff;box-shadow:0 1px 2px rgba(17,39,64,.04),0 6px 18px rgba(17,39,64,.04)}
++[data-testid="stDataFrame"] [role="columnheader"]{background:#eef3f8;color:var(--texte);font-weight:700}
++[data-testid="stAlert"]{border-radius:12px;border:1px solid var(--bord);box-shadow:0 1px 2px rgba(17,39,64,.03)}
+ [data-testid="stAlert"] p{font-size:.95rem}
+ 
+-/* ---- Blocs repliables et formulaires */
+-[data-testid="stExpander"]{border:1px solid #dce4ed;border-radius:10px;background:#fff;overflow:hidden}
+-[data-testid="stExpander"] summary{font-weight:600;color:#183653}
+-[data-testid="stForm"]{border:1px solid #dce4ed;border-radius:10px;background:#fff;padding:1rem 1.1rem}
+-
+-/* ---- Barre latérale : libellés de section discrets */
+-[data-testid="stSidebarNavSeparator"]{margin:.9rem 0 .3rem 0}
+-[data-testid="stSidebarNavSeparator"] + div{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:#8ea3b8}
+-[data-testid="stSidebarNavLink"]{border-radius:8px;margin:1px 6px}
+-[data-testid="stSidebarNavLink"]:hover{background:rgba(255,179,71,.09)}
++/* ===== Repères de statut (chiffres clés et étiquettes) ===== */
++.bg-tag{display:inline-block;background:#fff;border:1px solid var(--bord);border-radius:999px;padding:5px 12px;font-size:.84rem;color:var(--texte);margin:2px 6px 2px 0;box-shadow:0 1px 2px rgba(17,39,64,.04)}
++.bg-tag b{color:var(--bg-navy)}
++.bg-tag.ok{background:#e6f6ee;border-color:#bfe6cf;color:#176846}
++.bg-tag.alerte{background:#fdeeec;border-color:#f3c4bf;color:#a62d25}
++.bg-carte{background:#fff;border:1px solid var(--bord);border-radius:14px;padding:16px 18px;height:100%;box-shadow:0 1px 2px rgba(17,39,64,.04),0 6px 18px rgba(17,39,64,.05)}
++.bg-carte.accent{border-top:4px solid var(--ambre)}
++.bg-carte .t{font-size:.9rem;color:var(--texte);margin-bottom:.35rem;font-weight:600}
++.bg-carte .n{font-size:1.7rem;font-weight:800;letter-spacing:-1px;color:var(--bg-navy)}
++.bg-carte .m{color:var(--doux);font-size:.85rem}
++.bg-montants{font-variant-numeric:tabular-nums;line-height:1.55}
++.bg-montants b{font-size:1.25rem;letter-spacing:-.3px}
+ 
+-/* ---- Petits écrans : marges de 16 px, pas de défilement horizontal */
++/* ===== Petits écrans : marges de 16 px, pas de défilement horizontal ===== */
+ @media (max-width: 760px){
+- .block-container{padding-left:16px;padding-right:16px;padding-top:1.2rem}
++ [data-testid="stMainBlockContainer"].block-container{padding-left:16px;padding-right:16px;padding-top:4.8rem}
+  h1{font-size:1.6rem}
+  [data-testid="stHorizontalBlock"]{flex-wrap:wrap}
+  [data-testid="stMetricValue"]{font-size:1.2rem}
+@@ -178,7 +186,7 @@
+             b.caption(f"{r['taille'] // 1024} Ko · {str(r['ajoute_le'])[:10]}")
+             with c:
+                 contenu = db.requete("select contenu from pieces_jointes where id = :i", i=r["id"])[0]["contenu"]
+-                ui.telecharger("Ouvrir", contenu, r["nom"], r["mime"], key=f"pj_dl_{r['id']}")
++                telecharger("Ouvrir", contenu, r["nom"], r["mime"], key=f"pj_dl_{r['id']}")
+                 if peut_ajouter and (dg or r["ajoute_par"] == moi) and st.button("Retirer", key=f"pj_del_{r['id']}",
+                                                                                    icon=":material/delete:"):
+                     with db.transaction(f"Retrait du document {r['nom']}") as t:
+diff -ruN src/vues/comptes_tiers.py src_new/vues/comptes_tiers.py
+--- src/vues/comptes_tiers.py	2026-10-13 12:34:24.246930616 +0100
++++ src_new/vues/comptes_tiers.py	2026-10-13 12:34:24.255583182 +0100
+@@ -29,6 +29,10 @@
+         projet = ui.choix("Chantier *", ui.options_chantiers(s), "sf_p", "", vide="Choisir")
+         montant = ui.montant("Montant total *", "sf_mt", 0)
+         due = ui.date_txt("Échéance *", "sf_due")
++    # Identifiant réservé : les pièces jointes sont liées à la facture dès leur ajout, avant l'enregistrement
++    cible = st.session_state.setdefault("sf_id_new", db.nouvel_id())
++    ui.pieces_jointes("supplier_invoice", cible, peut_ajouter=True,
++                      titre="Pièces jointes (facture, bon de commande, bordereau…)")
+     if st.button("Enregistrer", type="primary"):
+         try:
+             mt = R.cents(montant, "Montant", positif=True)
+@@ -40,15 +44,69 @@
+                 raise ValueError("Cette facture existe déjà pour ce fournisseur.")
+             V.guard_legacy(projet)
+             with db.transaction(f"Facture fournisseur {ref.strip()}") as t:
+-                t.inserer("supplier_invoices", {"id": db.nouvel_id(), "party_id": tiers, "project": projet,
++                t.inserer("supplier_invoices", {"id": cible, "party_id": tiers, "project": projet,
+                                                 "reference": ref.strip(), "date": date, "due": due, "currency": monnaie,
+                                                 "amount": mt})
+         except ValueError as e:
+             st.error(str(e))
+         else:
++            st.session_state.pop("sf_id_new", None)
+             ui.succes("Facture fournisseur enregistrée, sans mouvement de trésorerie.")
+ 
+ 
++@st.dialog("Modifier la facture fournisseur", width="large")
++def modifier_facture(facture_id: str) -> None:
++    if not auth.est_admin():
++        st.error("La modification d’une facture fournisseur est réservée à l’administrateur.")
++        return
++    s = R.charger("clients", "projects", "supplier_invoices", "supplier_allocations", "supplier_reversals")
++    i = next((x for x in s["supplier_invoices"] if x["id"] == facture_id), None)
++    if i is None:
++        st.error("Facture introuvable.")
++        return
++    k = facture_id
++    paye = R.supplier_paid(s, k)
++    if paye:
++        st.info(f"Déjà réglé : {R.money(paye, i['currency'])}. Le fournisseur, le chantier, la monnaie et la date sont "
++                "figés ; le montant ne peut pas descendre sous ce total.")
++    else:
++        st.caption("Aucun règlement enregistré : tous les champs sont modifiables.")
++    a, b = st.columns(2)
++    with a:
++        tiers = ui.choix("Fournisseur *", ui.options_fournisseurs(s, i["party_id"]), f"mf_t_{k}", i["party_id"],
++                         vide="Choisir", disabled=bool(paye))
++        ref = st.text_input("Référence de la facture *", value=i["reference"], key=f"mf_ref_{k}")
++        if paye:
++            date = i["date"]
++            st.text_input("Date de facture", value=date, disabled=True, key=f"mf_d_{k}")
++        else:
++            date = ui.date_txt("Date de facture *", f"mf_d_{k}", i["date"])
++        monnaie = ui.devise("Monnaie", f"mf_cur_{k}", i["currency"], disabled=bool(paye))
++    with b:
++        projet = ui.choix("Chantier *", ui.options_chantiers(s), f"mf_p_{k}", i["project"], vide="Choisir",
++                          disabled=bool(paye))
++        montant = ui.montant("Montant total *", f"mf_mt_{k}", i["amount"])
++        due = ui.date_txt("Échéance *", f"mf_due_{k}", i["due"])
++    if st.button("Enregistrer les modifications", type="primary"):
++        try:
++            if not tiers or not projet:
++                raise ValueError("Renseignez le fournisseur et le chantier.")
++            nouvelles = {"party_id": tiers, "project": projet, "currency": monnaie, "reference": ref.strip(),
++                         "date": date, "due": due, "amount": R.cents(montant, "Montant", positif=True)}
++            R.valider_modif_facture_fournisseur(s, k, nouvelles)
++            V.guard_legacy(projet)
++            with db.transaction(f"Modification facture fournisseur {nouvelles['reference']}") as t:
++                t.get("supplier_invoices", k, verrou=True)
++                s2 = {**s, "supplier_allocations": t.lire("select * from supplier_allocations"),
++                      "supplier_reversals": t.lire("select * from supplier_reversals")}
++                R.valider_modif_facture_fournisseur(s2, k, nouvelles)
++                t.maj("supplier_invoices", k, nouvelles)
++        except ValueError as e:
++            st.error(str(e))
++        else:
++            ui.succes("Facture fournisseur modifiée. Les règlements existants sont conservés.")
++
++
+ @st.dialog("Versement fournisseur", width="large")
+ def versement(facture_id: str | None = None) -> None:
+     s = R.charger("clients", "projects", "supplier_invoices", "supplier_payments", "supplier_allocations",
+@@ -281,9 +339,14 @@
+                                 "fac": "Facturé", "reg": "Réglé", "reste": "Reste"}, key="tab_ct_four", selection=ecrit)
+             if i is not None:
+                 x = next(y for y in factures if y["id"] == lf[i]["_id"])
+-                if x["amount"] - R.supplier_paid(s, x["id"]) > 0 and st.button(f"Règlement effectué sur {x['reference']}",
+-                                                                              type="primary"):
++                b_mod, b_pay = ui.rangee(2)
++                if auth.est_admin() and b_mod.button(f"Modifier {x['reference']}", icon=":material/edit:"):
++                    modifier_facture(x["id"])
++                if x["amount"] - R.supplier_paid(s, x["id"]) > 0 and b_pay.button(
++                        f"Règlement effectué sur {x['reference']}", type="primary"):
+                     versement(x["id"])
++                ui.pieces_jointes("supplier_invoice", x["id"], peut_ajouter=ecrit,
++                                  titre=f"Pièces jointes à {x['reference']}")
+         else:
+             st.caption("Aucune facture fournisseur saisie pour ces critères.")
+         st.markdown("##### Avances et paiements enregistrés")
