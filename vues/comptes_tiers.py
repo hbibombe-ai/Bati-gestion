@@ -49,6 +49,56 @@ def facture_fournisseur() -> None:
             ui.succes("Facture fournisseur enregistrée, sans mouvement de trésorerie.")
 
 
+@st.dialog("Modifier la facture fournisseur", width="large")
+def modifier_facture(facture_id: str) -> None:
+    s = R.charger("clients", "projects", "supplier_invoices", "supplier_allocations", "supplier_reversals")
+    i = next((x for x in s["supplier_invoices"] if x["id"] == facture_id), None)
+    if i is None:
+        st.error("Facture introuvable.")
+        return
+    k = facture_id
+    paye = R.supplier_paid(s, k)
+    if paye:
+        st.info(f"Déjà réglé : {R.money(paye, i['currency'])}. Le fournisseur, le chantier, la monnaie et la date sont "
+                "figés ; le montant ne peut pas descendre sous ce total.")
+    else:
+        st.caption("Aucun règlement enregistré : tous les champs sont modifiables.")
+    a, b = st.columns(2)
+    with a:
+        tiers = ui.choix("Fournisseur *", ui.options_fournisseurs(s, i["party_id"]), f"mf_t_{k}", i["party_id"],
+                         vide="Choisir", disabled=bool(paye))
+        ref = st.text_input("Référence de la facture *", value=i["reference"], key=f"mf_ref_{k}")
+        if paye:
+            date = i["date"]
+            st.text_input("Date de facture", value=date, disabled=True, key=f"mf_d_{k}")
+        else:
+            date = ui.date_txt("Date de facture *", f"mf_d_{k}", i["date"])
+        monnaie = ui.devise("Monnaie", f"mf_cur_{k}", i["currency"], disabled=bool(paye))
+    with b:
+        projet = ui.choix("Chantier *", ui.options_chantiers(s), f"mf_p_{k}", i["project"], vide="Choisir",
+                          disabled=bool(paye))
+        montant = ui.montant("Montant total *", f"mf_mt_{k}", i["amount"])
+        due = ui.date_txt("Échéance *", f"mf_due_{k}", i["due"])
+    if st.button("Enregistrer les modifications", type="primary"):
+        try:
+            if not tiers or not projet:
+                raise ValueError("Renseignez le fournisseur et le chantier.")
+            nouvelles = {"party_id": tiers, "project": projet, "currency": monnaie, "reference": ref.strip(),
+                         "date": date, "due": due, "amount": R.cents(montant, "Montant", positif=True)}
+            R.valider_modif_facture_fournisseur(s, k, nouvelles)
+            V.guard_legacy(projet)
+            with db.transaction(f"Modification facture fournisseur {nouvelles['reference']}") as t:
+                t.get("supplier_invoices", k, verrou=True)
+                s2 = {**s, "supplier_allocations": t.lire("select * from supplier_allocations"),
+                      "supplier_reversals": t.lire("select * from supplier_reversals")}
+                R.valider_modif_facture_fournisseur(s2, k, nouvelles)
+                t.maj("supplier_invoices", k, nouvelles)
+        except ValueError as e:
+            st.error(str(e))
+        else:
+            ui.succes("Facture fournisseur modifiée. Les règlements existants sont conservés.")
+
+
 @st.dialog("Versement fournisseur", width="large")
 def versement(facture_id: str | None = None) -> None:
     s = R.charger("clients", "projects", "supplier_invoices", "supplier_payments", "supplier_allocations",
@@ -281,8 +331,11 @@ def page() -> None:
                                 "fac": "Facturé", "reg": "Réglé", "reste": "Reste"}, key="tab_ct_four", selection=ecrit)
             if i is not None:
                 x = next(y for y in factures if y["id"] == lf[i]["_id"])
-                if x["amount"] - R.supplier_paid(s, x["id"]) > 0 and st.button(f"Règlement effectué sur {x['reference']}",
-                                                                              type="primary"):
+                b_mod, b_pay = ui.rangee(2)
+                if b_mod.button(f"Modifier {x['reference']}", icon=":material/edit:"):
+                    modifier_facture(x["id"])
+                if x["amount"] - R.supplier_paid(s, x["id"]) > 0 and b_pay.button(
+                        f"Règlement effectué sur {x['reference']}", type="primary"):
                     versement(x["id"])
         else:
             st.caption("Aucune facture fournisseur saisie pour ces critères.")

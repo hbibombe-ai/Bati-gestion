@@ -349,6 +349,39 @@ def supplier_advance(s: dict, payment_id: str) -> int:
     return p["amount"] - sum(a["amount"] for a in s.get("supplier_allocations", []) if a["payment_id"] == payment_id)
 
 
+CHAMPS_FIGES_FOURNISSEUR = ("party_id", "project", "currency", "date")
+
+
+def valider_modif_facture_fournisseur(s: dict, facture_id: str, nouvelles: dict) -> None:
+    """Règles de modification d'une facture fournisseur. Lève ValueError si la modification est refusée.
+
+    Sans règlement : tous les champs sont modifiables. Avec règlement : tiers, chantier, monnaie et date
+    sont figés, et le montant ne peut pas descendre sous le total déjà réglé."""
+    i = next((x for x in s["supplier_invoices"] if x["id"] == facture_id), None)
+    if i is None:
+        raise ValueError("Facture introuvable.")
+    ref = str(nouvelles.get("reference", "")).strip()
+    if not ref:
+        raise ValueError("La référence est obligatoire.")
+    if not is_date(nouvelles.get("date")) or not is_date(nouvelles.get("due")):
+        raise ValueError("Indiquez une date de facture et une échéance valides.")
+    if nouvelles["due"] < nouvelles["date"]:
+        raise ValueError("L’échéance doit être postérieure à la date de facture.")
+    if nouvelles["amount"] <= 0:
+        raise ValueError("Le montant doit être positif.")
+    if any(x["id"] != facture_id and x["party_id"] == nouvelles["party_id"]
+           and x["reference"].strip().lower() == ref.lower() for x in s["supplier_invoices"]):
+        raise ValueError("Cette facture existe déjà pour ce fournisseur.")
+    paye = supplier_paid(s, facture_id)
+    if paye:
+        if any(nouvelles[c] != i[c] for c in CHAMPS_FIGES_FOURNISSEUR):
+            raise ValueError("Cette facture a déjà reçu des règlements : le fournisseur, le chantier, la monnaie et la "
+                             "date ne peuvent plus être modifiés.")
+        if nouvelles["amount"] < paye:
+            raise ValueError(f"Le montant ne peut pas être inférieur au total déjà réglé "
+                             f"({money(paye, i['currency'])}).")
+
+
 # ------------------------------------------------------------------ rapports
 def erp_forecast(s: dict, as_of: str) -> dict:
     res = {c: {"balance": 0, "overdueIn": 0, "overdueOut": 0, "undatedIn": 0,
