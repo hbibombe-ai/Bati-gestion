@@ -137,22 +137,17 @@ class CreerFactureAvecPieceJointe(unittest.TestCase):
         self.p.stop()
         self.engine.dispose()
 
-    def test_piece_jointe_rattachee_a_la_nouvelle_facture(self):
-        import datetime as dt
-        import hashlib
+    def test_facture_jointe_enregistree_avec_son_fichier(self):
         import db
         os.environ["BG_RACINE"] = RACINE
         at = AppTest.from_function(_creer, args=("finance",), default_timeout=60)
         at.run()
         self.assertFalse(at.exception, f"{at.exception}")
-        cible = at.session_state["sf_id_new"]
-        # Simule l'ajout d'un bon de commande (le téléversement lui-même est couvert par test_pieces_jointes)
         contenu = b"%PDF-1.4 test"
-        with self.engine.begin() as c:
-            c.execute(db.pieces_jointes.insert().values(
-                id="pj1", entite="supplier_invoice", entite_id=cible, libelle="Bon de commande", nom="bc.pdf",
-                mime="application/pdf", taille=len(contenu), sha256=hashlib.sha256(contenu).hexdigest(),
-                contenu=contenu, ajoute_par=1, ajoute_le=dt.datetime(2026, 10, 13)))
+        # Le téléversement est lu par _lire_facture ; ici on place le fichier tel que la lecture le ferait
+        at.session_state["sf_contenu"] = contenu
+        at.session_state["sf_mime"] = "application/pdf"
+        at.session_state["sf_nom"] = "facture.pdf"
         at.run()
         at.selectbox(key="sf_t").set_value("f")
         at.selectbox(key="sf_p").set_value("p")
@@ -164,10 +159,21 @@ class CreerFactureAvecPieceJointe(unittest.TestCase):
         self.assertEqual([e.value for e in at.error], [])
         with self.engine.connect() as c:
             facture = c.execute(db.supplier_invoices.select().where(db.supplier_invoices.c.reference == "FR-9")).one()
-            pj = c.execute(db.pieces_jointes.select().where(db.pieces_jointes.c.id == "pj1")).one()
-        self.assertEqual(facture.id, cible)
-        self.assertEqual(pj.entite_id, facture.id)
+            pj = c.execute(db.pieces_jointes.select().where(db.pieces_jointes.c.entite_id == facture.id)).one()
+        self.assertEqual(pj.nom, "facture.pdf")
+        self.assertEqual(pj.contenu, contenu)
 
+    def test_enregistrement_refuse_sans_facture_jointe(self):
+        os.environ["BG_RACINE"] = RACINE
+        at = AppTest.from_function(_creer, args=("finance",), default_timeout=60)
+        at.run()
+        at.selectbox(key="sf_t").set_value("f")
+        at.selectbox(key="sf_p").set_value("p")
+        next(t for t in at.text_input if t.label.startswith("Référence")).input("FR-10")
+        next(n for n in at.number_input if n.label.startswith("Montant total")).set_value(150.0)
+        next(b for b in at.button if b.label == "Enregistrer").click()
+        at.run()
+        self.assertTrue(any("Joignez la facture" in e.value for e in at.error))
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,533 @@
+diff -ruN -x __pycache__ new/lecture_facture.py zip/lecture_facture.py
+--- new/lecture_facture.py	1970-01-01 01:00:00.000000000 +0100
++++ zip/lecture_facture.py	2026-10-16 11:48:52.552086206 +0100
+@@ -0,0 +1,146 @@
++"""Lecture d'une facture fournisseur jointe : extrait le texte d'un PDF et propose les champs de saisie.
++
++Sans texte lisible (image, PDF scanné) ou sans bibliothèque PDF, rien n'est proposé : l'usager saisit les champs.
++Les valeurs proposées doivent être vérifiées avant l'enregistrement."""
++from __future__ import annotations
++
++import datetime as dt
++import io
++import re
++import unicodedata
++
++MOIS = {"janvier": 1, "fevrier": 2, "mars": 3, "avril": 4, "mai": 5, "juin": 6, "juillet": 7, "aout": 8,
++        "septembre": 9, "octobre": 10, "novembre": 11, "decembre": 12}
++RE_DATE = re.compile(r"\b(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})\b|\b(\d{4})-(\d{2})-(\d{2})\b"
++                     r"|\b(\d{1,2})\s+([A-Za-zéûèôâ]+)\.?\s+(\d{4})\b", re.I)
++RE_NOMBRE = re.compile(r"\d{1,3}(?:[ .,  ]\d{3})+(?:[.,]\d{1,2})?\b|\d+(?:[.,]\d{1,2})?")
++
++
++def _norm(t: str) -> str:
++    return unicodedata.normalize("NFKD", t).encode("ascii", "ignore").decode().lower()
++
++
++def texte_pdf(contenu: bytes) -> str:
++    """Texte des cinq premières pages d'un PDF, ou chaîne vide si la lecture est impossible."""
++    try:
++        from pypdf import PdfReader
++    except ImportError:
++        return ""
++    try:
++        lecteur = PdfReader(io.BytesIO(contenu))
++        return "\n".join((p.extract_text() or "") for p in lecteur.pages[:5])
++    except Exception:
++        return ""
++
++
++def date_iso(texte: str) -> str | None:
++    """Première date reconnue dans le texte, au format AAAA-MM-JJ."""
++    m = RE_DATE.search(texte)
++    if not m:
++        return None
++    try:
++        if m.group(1):
++            j, mo, a = int(m.group(1)), int(m.group(2)), int(m.group(3))
++        elif m.group(4):
++            a, mo, j = int(m.group(4)), int(m.group(5)), int(m.group(6))
++        else:
++            j, a = int(m.group(7)), int(m.group(9))
++            mo = MOIS.get(_norm(m.group(8)).rstrip("."))
++            if not mo:
++                return None
++        return dt.date(a, mo, j).isoformat()
++    except ValueError:
++        return None
++
++
++def montant_centimes(jeton: str) -> int | None:
++    """« 1 234,56 » , « 1,234.56 » ou « 1.234 » → centimes."""
++    jeton = jeton.replace(" ", " ").replace(" ", " ").strip()
++    dec = None
++    if "," in jeton and "." in jeton:
++        dec = "," if jeton.rfind(",") > jeton.rfind(".") else "."
++    elif "," in jeton or "." in jeton:
++        sep = "," if "," in jeton else "."
++        parties = jeton.split(sep)
++        if len(parties) == 2 and len(parties[1]) in (1, 2):
++            dec = sep
++    entier, frac = (jeton.rsplit(dec, 1) if dec else (jeton, ""))
++    entier = re.sub(r"[ .,]", "", entier)
++    if not entier.isdigit() or (frac and not frac.isdigit()):
++        return None
++    return int(entier) * 100 + int(frac.ljust(2, "0")[:2] or 0)
++
++
++def _lignes_avec(lignes: list[str], motif: str, exclure: str | None = None) -> list[str]:
++    return [l for l in lignes if re.search(motif, _norm(l)) and not (exclure and re.search(exclure, _norm(l)))]
++
++
++def _reference(lignes: list[str]) -> str | None:
++    valeur = r"[\s:#.n°o]*([A-Za-z0-9][A-Za-z0-9\-/_.]*\d[A-Za-z0-9\-/_.]*)"
++    for motif in (r"facture\s*(?:n[°o]|no|#|num)", r"invoice\s*(?:no|n[°o]|number|#)?", r"r[ée]f[ée]rence"):
++        for ligne in lignes:
++            for m in re.finditer(motif + valeur, ligne, re.I):
++                jeton = m.group(1).rstrip(".")
++                if len(jeton) >= 3 and not RE_DATE.search(jeton):
++                    return jeton
++    return None
++
++
++def _montant(lignes: list[str]) -> int | None:
++    groupes = (r"ttc|a payer|amount due|net a payer|total due|montant total|total general",
++               r"total")
++    for motif in groupes:
++        for ligne in reversed(_lignes_avec(lignes, motif, exclure=r"\bht\b|hors taxe|tva\b.*total")):
++            nombres = [montant_centimes(n) for n in RE_NOMBRE.findall(ligne)]
++            nombres = [n for n in nombres if n]
++            if nombres:
++                return nombres[-1]
++    return None
++
++
++def _devise(texte: str) -> str | None:
++    compte = {"USD": len(re.findall(r"\bUSD\b|US\$", texte)),
++              "CDF": len(re.findall(r"\bCDF\b|\bFC\b", texte)),
++              "EUR": len(re.findall(r"\bEUR\b|€", texte))}
++    cible, n = max(compte.items(), key=lambda kv: kv[1])
++    return cible if n else None
++
++
++def _fournisseur(texte: str, fournisseurs: list[tuple[str, str]]) -> str | None:
++    t = " " + re.sub(r"[^a-z0-9]+", " ", _norm(texte)) + " "
++    meilleur, longueur = None, 0
++    for identifiant, nom in fournisseurs:
++        n = " " + re.sub(r"[^a-z0-9]+", " ", _norm(nom)).strip() + " "
++        if len(n.strip()) >= 4 and n in t and len(n) > longueur:
++            meilleur, longueur = identifiant, len(n)
++    return meilleur
++
++
++def extraire(texte: str, fournisseurs: list[tuple[str, str]]) -> dict:
++    """Champs proposés à partir du texte : référence, dates, montant (centimes), monnaie, fournisseur."""
++    lignes = [l for l in texte.splitlines() if l.strip()]
++    res = {"reference": None, "date": None, "due": None, "amount": None, "currency": None, "party_id": None}
++    if len(texte.strip()) < 20:
++        res["lisible"] = False
++        return res
++    res["lisible"] = True
++    res["reference"] = _reference(lignes)
++    dates_facture = _lignes_avec(lignes, r"\bdate\b", exclure=r"echeance|due|paiement|payer")
++    res["date"] = next((date_iso(l) for l in dates_facture if date_iso(l)), None)
++    dates_echeance = _lignes_avec(lignes, r"echeance|due date|a payer avant|date limite")
++    res["due"] = next((date_iso(l) for l in dates_echeance if date_iso(l)), None)
++    res["amount"] = _montant(lignes)
++    res["currency"] = _devise(texte)
++    res["party_id"] = _fournisseur(texte, fournisseurs)
++    return res
++
++
++LIBELLES = {"reference": "référence", "date": "date de facture", "due": "échéance", "amount": "montant total",
++            "currency": "monnaie", "party_id": "fournisseur"}
++
++
++def bilan(res: dict) -> tuple[list[str], list[str]]:
++    """Champs trouvés et champs à saisir à la main."""
++    trouves = [LIBELLES[k] for k in LIBELLES if res.get(k)]
++    manquants = [LIBELLES[k] for k in LIBELLES if not res.get(k)]
++    return trouves, manquants
+diff -ruN -x __pycache__ new/regles.py zip/regles.py
+--- new/regles.py	2026-10-16 11:42:11.007540060 +0100
++++ zip/regles.py	2026-10-16 11:42:33.802828210 +0100
+@@ -382,6 +382,29 @@
+                              f"({money(paye, i['currency'])}).")
+ 
+ 
++def statut_facture_fournisseur(s: dict, party_id: str, reference: str, amount: int | None = None) -> dict | None:
++    """Recherche une facture déjà saisie pour ce fournisseur avec la même référence et dit si elle est réglée.
++
++    Renvoie None si aucune facture ne correspond. Sinon : la facture, le montant réglé, le reste dû, le statut
++    (« non réglée », « partiellement réglée » ou « réglée ») et si le montant saisi est identique."""
++    ref = str(reference or "").strip().lower()
++    if not party_id or not ref:
++        return None
++    inv = next((i for i in s.get("supplier_invoices", [])
++                if i["party_id"] == party_id and str(i["reference"]).strip().lower() == ref), None)
++    if inv is None:
++        return None
++    paye = supplier_paid(s, inv["id"])
++    if paye <= 0:
++        statut = "non réglée"
++    elif paye < inv["amount"]:
++        statut = "partiellement réglée"
++    else:
++        statut = "réglée"
++    return {"facture": inv, "paye": paye, "reste": max(inv["amount"] - paye, 0), "statut": statut,
++            "montant_identique": amount is None or amount == inv["amount"]}
++
++
+ # ------------------------------------------------------------------ rapports
+ def erp_forecast(s: dict, as_of: str) -> dict:
+     res = {c: {"balance": 0, "overdueIn": 0, "overdueOut": 0, "undatedIn": 0,
+diff -ruN -x __pycache__ new/requirements.txt zip/requirements.txt
+--- new/requirements.txt	2026-10-16 11:42:11.007067174 +0100
++++ zip/requirements.txt	2026-10-16 11:49:26.363390327 +0100
+@@ -5,3 +5,4 @@
+ openpyxl
+ reportlab
+ requests
++pypdf
+diff -ruN -x __pycache__ new/tests/test_lecture_facture.py zip/tests/test_lecture_facture.py
+--- new/tests/test_lecture_facture.py	1970-01-01 01:00:00.000000000 +0100
++++ zip/tests/test_lecture_facture.py	2026-10-16 11:48:52.555996774 +0100
+@@ -0,0 +1,60 @@
++"""Lecture automatique d'une facture jointe : champs proposés à partir du texte."""
++import unittest
++
++import lecture_facture as L
++
++FACTURE = """QUINCAILLERIE CENTRALE SARL
++Facture n° FR-2026-0042
++Date de facture : 01/10/2026
++Échéance : 30/10/2026
++Désignation ciment 50 kg
++Total HT : 1 000,00 USD
++TVA 16% : 160,00 USD
++TOTAL TTC : 1 160,00 USD"""
++FOURNISSEURS = [("f1", "Quincaillerie Centrale SARL"), ("f2", "Autre fournisseur")]
++
++
++class ExtractionFacture(unittest.TestCase):
++    def test_champs_extraits(self):
++        r = L.extraire(FACTURE, FOURNISSEURS)
++        self.assertEqual(r["reference"], "FR-2026-0042")
++        self.assertEqual(r["date"], "2026-10-01")
++        self.assertEqual(r["due"], "2026-10-30")
++        self.assertEqual(r["amount"], 116000)  # TTC, pas le HT
++        self.assertEqual(r["currency"], "USD")
++        self.assertEqual(r["party_id"], "f1")
++        self.assertTrue(r["lisible"])
++
++    def test_texte_vide_ou_image(self):
++        r = L.extraire("", FOURNISSEURS)
++        self.assertFalse(r["lisible"])
++        self.assertIsNone(r["reference"])
++        self.assertIsNone(r["amount"])
++
++    def test_montants_formats_differents(self):
++        self.assertEqual(L.montant_centimes("1,234.56"), 123456)
++        self.assertEqual(L.montant_centimes("1.234,56"), 123456)
++        self.assertEqual(L.montant_centimes("1 234 567,89"), 123456789)
++        self.assertEqual(L.montant_centimes("12,5"), 1250)
++        self.assertEqual(L.montant_centimes("1.234"), 123400)
++        self.assertIsNone(L.montant_centimes("abc"))
++
++    def test_date_en_lettres(self):
++        self.assertEqual(L.date_iso("Fait le 5 octobre 2026"), "2026-10-05")
++        self.assertEqual(L.date_iso("2026-09-30"), "2026-09-30")
++        self.assertIsNone(L.date_iso("31/02/2026"))
++
++    def test_reference_ne_prend_pas_une_date(self):
++        r = L.extraire("Facture : 05/10/2026\nTOTAL 10,00 USD\nFournisseur Test SARL", [])
++        self.assertIsNone(r["reference"])
++
++    def test_bilan(self):
++        trouves, manquants = L.bilan({"reference": "X1", "date": None, "due": None, "amount": 100,
++                                      "currency": None, "party_id": None})
++        self.assertIn("référence", trouves)
++        self.assertIn("date de facture", manquants)
++        self.assertIn("monnaie", manquants)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff -ruN -x __pycache__ new/tests/test_modif_facture_ecran.py zip/tests/test_modif_facture_ecran.py
+--- new/tests/test_modif_facture_ecran.py	2026-10-16 11:42:11.007867038 +0100
++++ zip/tests/test_modif_facture_ecran.py	2026-10-16 11:49:42.065308150 +0100
+@@ -137,22 +137,17 @@
+         self.p.stop()
+         self.engine.dispose()
+ 
+-    def test_piece_jointe_rattachee_a_la_nouvelle_facture(self):
+-        import datetime as dt
+-        import hashlib
++    def test_facture_jointe_enregistree_avec_son_fichier(self):
+         import db
+         os.environ["BG_RACINE"] = RACINE
+         at = AppTest.from_function(_creer, args=("finance",), default_timeout=60)
+         at.run()
+         self.assertFalse(at.exception, f"{at.exception}")
+-        cible = at.session_state["sf_id_new"]
+-        # Simule l'ajout d'un bon de commande (le téléversement lui-même est couvert par test_pieces_jointes)
+         contenu = b"%PDF-1.4 test"
+-        with self.engine.begin() as c:
+-            c.execute(db.pieces_jointes.insert().values(
+-                id="pj1", entite="supplier_invoice", entite_id=cible, libelle="Bon de commande", nom="bc.pdf",
+-                mime="application/pdf", taille=len(contenu), sha256=hashlib.sha256(contenu).hexdigest(),
+-                contenu=contenu, ajoute_par=1, ajoute_le=dt.datetime(2026, 10, 13)))
++        # Le téléversement est lu par _lire_facture ; ici on place le fichier tel que la lecture le ferait
++        at.session_state["sf_contenu"] = contenu
++        at.session_state["sf_mime"] = "application/pdf"
++        at.session_state["sf_nom"] = "facture.pdf"
+         at.run()
+         at.selectbox(key="sf_t").set_value("f")
+         at.selectbox(key="sf_p").set_value("p")
+@@ -164,10 +159,21 @@
+         self.assertEqual([e.value for e in at.error], [])
+         with self.engine.connect() as c:
+             facture = c.execute(db.supplier_invoices.select().where(db.supplier_invoices.c.reference == "FR-9")).one()
+-            pj = c.execute(db.pieces_jointes.select().where(db.pieces_jointes.c.id == "pj1")).one()
+-        self.assertEqual(facture.id, cible)
+-        self.assertEqual(pj.entite_id, facture.id)
++            pj = c.execute(db.pieces_jointes.select().where(db.pieces_jointes.c.entite_id == facture.id)).one()
++        self.assertEqual(pj.nom, "facture.pdf")
++        self.assertEqual(pj.contenu, contenu)
+ 
++    def test_enregistrement_refuse_sans_facture_jointe(self):
++        os.environ["BG_RACINE"] = RACINE
++        at = AppTest.from_function(_creer, args=("finance",), default_timeout=60)
++        at.run()
++        at.selectbox(key="sf_t").set_value("f")
++        at.selectbox(key="sf_p").set_value("p")
++        next(t for t in at.text_input if t.label.startswith("Référence")).input("FR-10")
++        next(n for n in at.number_input if n.label.startswith("Montant total")).set_value(150.0)
++        next(b for b in at.button if b.label == "Enregistrer").click()
++        at.run()
++        self.assertTrue(any("Joignez la facture" in e.value for e in at.error))
+ 
+ if __name__ == "__main__":
+     unittest.main()
+diff -ruN -x __pycache__ new/tests/test_statut_facture_fournisseur.py zip/tests/test_statut_facture_fournisseur.py
+--- new/tests/test_statut_facture_fournisseur.py	1970-01-01 01:00:00.000000000 +0100
++++ zip/tests/test_statut_facture_fournisseur.py	2026-10-16 11:42:52.242829306 +0100
+@@ -0,0 +1,57 @@
++"""Contrôle de doublon et de règlement à la saisie d'une facture fournisseur."""
++import unittest
++
++import regles as R
++
++
++def _base(paye=0):
++    s = {
++        "supplier_invoices": [
++            {"id": "f1", "party_id": "p1", "project": "c1", "currency": "USD", "reference": "FR-1",
++             "date": "2026-10-01", "due": "2026-10-30", "amount": 10000},
++        ],
++        "supplier_payments": [], "supplier_allocations": [], "supplier_reversals": [],
++    }
++    if paye:
++        s["supplier_payments"].append({"id": "pay1", "party_id": "p1", "project": "c1", "currency": "USD",
++                                       "amount": paye, "date": "2026-10-05", "account": "bank"})
++        s["supplier_allocations"].append({"payment_id": "pay1", "invoice_id": "f1", "amount": paye,
++                                          "date": "2026-10-05"})
++    return s
++
++
++class StatutFactureFournisseur(unittest.TestCase):
++    def test_aucune_facture_correspondante(self):
++        self.assertIsNone(R.statut_facture_fournisseur(_base(), "p1", "FR-99", 10000))
++        self.assertIsNone(R.statut_facture_fournisseur(_base(), "p9", "FR-1", 10000))
++        self.assertIsNone(R.statut_facture_fournisseur(_base(), "p1", "  ", 10000))
++
++    def test_non_reglee(self):
++        r = R.statut_facture_fournisseur(_base(), "p1", "fr-1", 10000)
++        self.assertEqual(r["statut"], "non réglée")
++        self.assertEqual(r["reste"], 10000)
++        self.assertTrue(r["montant_identique"])
++
++    def test_partiellement_reglee(self):
++        r = R.statut_facture_fournisseur(_base(paye=4000), "p1", "FR-1", 10000)
++        self.assertEqual(r["statut"], "partiellement réglée")
++        self.assertEqual(r["paye"], 4000)
++        self.assertEqual(r["reste"], 6000)
++
++    def test_reglee(self):
++        r = R.statut_facture_fournisseur(_base(paye=10000), "p1", "FR-1", 10000)
++        self.assertEqual(r["statut"], "réglée")
++        self.assertEqual(r["reste"], 0)
++
++    def test_paiement_contrepasse_ne_compte_pas(self):
++        s = _base(paye=10000)
++        s["supplier_reversals"] = [{"payment_id": "pay1"}]
++        self.assertEqual(R.statut_facture_fournisseur(s, "p1", "FR-1", 10000)["statut"], "non réglée")
++
++    def test_montant_different_signale(self):
++        r = R.statut_facture_fournisseur(_base(), "p1", "FR-1", 9000)
++        self.assertFalse(r["montant_identique"])
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff -ruN -x __pycache__ new/vues/comptes_tiers.py zip/vues/comptes_tiers.py
+--- new/vues/comptes_tiers.py	2026-10-16 11:42:11.007171887 +0100
++++ zip/vues/comptes_tiers.py	2026-10-16 11:49:16.753298419 +0100
+@@ -1,11 +1,16 @@
+ """Comptes tiers : créances clients (balance âgée), dettes et avances fournisseurs, contre-passations."""
+ from __future__ import annotations
+ 
++import datetime as dt
++import hashlib
++import re
++
+ import streamlit as st
+ 
+ import auth
+ import db
+ import gestion_v7 as V
++import lecture_facture as LF
+ import regles as R
+ import ui
+ from vues import devis_factures
+@@ -15,43 +20,131 @@
+     return st.session_state.setdefault("ct_filtres", {"party": "", "project": "", "currency": "", "from": "", "to": ""})
+ 
+ 
++def _lire_facture(s: dict) -> None:
++    """Dès qu'une facture est jointe : lit le document et pré-remplit la saisie, que l'usager vérifie ensuite."""
++    st.session_state.pop("sf_lecture", None)
++    st.session_state.pop("sf_erreur", None)
++    f = st.session_state.get("sf_fichier")
++    if f is None:
++        st.session_state.pop("sf_contenu", None)
++        return
++    contenu = f.getvalue()
++    mime = ui.mime_fichier(contenu)
++    if not contenu or len(contenu) > R.PIECE_MAX or not mime:
++        st.session_state.pop("sf_contenu", None)
++        st.session_state["sf_erreur"] = "Fichier refusé : PDF, JPEG ou PNG de 5 Mo au plus."
++        return
++    st.session_state.update({"sf_contenu": contenu, "sf_nom": f.name, "sf_mime": mime})
++    texte = LF.texte_pdf(contenu) if mime == "application/pdf" else ""
++    fournisseurs = [(c["id"], c["name"]) for c in s["clients"] if set(R.party_roles(c)) & {"supplier", "subcontractor"}]
++    res = LF.extraire(texte, fournisseurs)
++    if res.get("party_id"):
++        st.session_state["sf_t"] = res["party_id"]
++    if res.get("reference"):
++        st.session_state["sf_ref"] = res["reference"]
++    if res.get("date"):
++        st.session_state["sf_d"] = dt.date.fromisoformat(res["date"])
++    if res.get("due"):
++        st.session_state["sf_due"] = dt.date.fromisoformat(res["due"])
++    if res.get("amount"):
++        st.session_state["sf_mt"] = res["amount"] / 100
++    if res.get("currency"):
++        st.session_state["sf_cur"] = res["currency"]
++    trouves, manquants = LF.bilan(res)
++    if trouves:
++        message = "Champs proposés à partir de la facture : " + ", ".join(trouves) + "."
++        if manquants:
++            message += " À saisir : " + ", ".join(manquants) + "."
++    else:
++        message = "Aucun champ lisible dans ce document : saisissez les informations de la facture."
++    st.session_state["sf_lecture"] = message
++
++
+ @st.dialog("Facture fournisseur", width="large")
+ def facture_fournisseur() -> None:
+-    s = R.charger("clients", "projects", "supplier_invoices")
++    s = R.charger("clients", "projects", "supplier_invoices", "supplier_allocations", "supplier_reversals")
+     st.caption("Cette saisie crée une dette, sans sortie de caisse et sans dépense payée.")
++    st.file_uploader("Facture * (PDF, JPEG ou PNG, 5 Mo au plus)", type=["pdf", "jpg", "jpeg", "png"],
++                     key="sf_fichier", on_change=_lire_facture, args=(s,))
++    if st.session_state.get("sf_erreur"):
++        st.error(st.session_state["sf_erreur"])
++    elif st.session_state.get("sf_lecture"):
++        st.info(st.session_state["sf_lecture"])
+     a, b = st.columns(2)
+     with a:
+         tiers = ui.choix("Fournisseur *", ui.options_fournisseurs(s), "sf_t", "", vide="Choisir")
+-        ref = st.text_input("Référence de la facture *")
++        ref = st.text_input("Référence de la facture *", key="sf_ref")
+         date = ui.date_txt("Date de facture *", "sf_d")
+         monnaie = ui.devise("Monnaie", "sf_cur")
+     with b:
+         projet = ui.choix("Chantier *", ui.options_chantiers(s), "sf_p", "", vide="Choisir")
+         montant = ui.montant("Montant total *", "sf_mt", 0)
+         due = ui.date_txt("Échéance *", "sf_due")
+-    # Identifiant réservé : les pièces jointes sont liées à la facture dès leur ajout, avant l'enregistrement
++    # Contrôle en direct : la facture est-elle déjà saisie pour ce fournisseur, et a-t-elle été réglée ?
++    try:
++        montant_apercu = R.cents(montant, "Montant", positif=True)
++    except ValueError:
++        montant_apercu = None
++    contenu = st.session_state.get("sf_contenu")
++    empreinte = hashlib.sha256(contenu).hexdigest() if contenu else None
++    deja = db.requete("select entite_id from pieces_jointes where entite = 'supplier_invoice' and sha256 = :h",
++                      h=empreinte) if empreinte else []
++    if deja:
++        fac = next((i for i in s["supplier_invoices"] if i["id"] == deja[0]["entite_id"]), None)
++        if fac:
++            etat = R.statut_facture_fournisseur(s, fac["party_id"], fac["reference"])
++            st.error(f"Ce fichier est déjà joint à la facture « {fac['reference']} » ({etat['statut']}, "
++                     f"{R.money(etat['paye'], fac['currency'])} réglés). Ne le saisissez pas une seconde fois.")
++    ex = R.statut_facture_fournisseur(s, tiers, ref, montant_apercu)
++    if ex:
++        inv = ex["facture"]
++        detail = (f"Facture « {inv['reference']} » du {inv['date']}, {R.money(inv['amount'], inv['currency'])} : "
++                  f"{ex['statut']} ({R.money(ex['paye'], inv['currency'])} réglés, "
++                  f"reste {R.money(ex['reste'], inv['currency'])}).")
++        if not ex["montant_identique"]:
++            detail += " Le montant saisi est différent de celui de la facture existante."
++        if ex["statut"] == "réglée":
++            st.error(detail + " Cette facture est déjà payée : ne la saisissez pas une seconde fois.")
++        else:
++            st.warning(detail + " Vérifiez qu’il ne s’agit pas d’un doublon avant d’enregistrer.")
++    elif tiers and ref.strip():
++        st.caption("Aucune facture de ce fournisseur avec cette référence : pas de doublon détecté.")
++    # Identifiant réservé : les documents joints sont liés à la facture dès leur ajout
+     cible = st.session_state.setdefault("sf_id_new", db.nouvel_id())
+     ui.pieces_jointes("supplier_invoice", cible, peut_ajouter=True,
+-                      titre="Pièces jointes (facture, bon de commande, bordereau…)")
++                      titre="Autres documents (bon de commande, bordereau… facultatif)")
+     if st.button("Enregistrer", type="primary"):
+         try:
+             mt = R.cents(montant, "Montant", positif=True)
++            if not contenu:
++                raise ValueError("Joignez la facture (PDF, JPEG ou PNG) avant d’enregistrer.")
+             if not tiers or not projet or not ref.strip() or due < date:
+                 raise ValueError("Renseignez le tiers, le chantier, la référence, le montant et une échéance après la "
+                                  "date de facture.")
+-            if any(i["party_id"] == tiers and i["reference"].strip().lower() == ref.strip().lower()
+-                   for i in s["supplier_invoices"]):
+-                raise ValueError("Cette facture existe déjà pour ce fournisseur.")
++            if deja:
++                raise ValueError("Ce fichier est déjà joint à une facture enregistrée.")
++            ex = R.statut_facture_fournisseur(s, tiers, ref, mt)
++            if ex:
++                raise ValueError(f"Cette facture existe déjà pour ce fournisseur ({ex['statut']}, "
++                                 f"{R.money(ex['paye'], ex['facture']['currency'])} réglés).")
+             V.guard_legacy(projet)
++            nom = re.sub(r'[\\/:*?"<>|]+', "_", st.session_state.get("sf_nom", "facture"))[:280] or "facture"
+             with db.transaction(f"Facture fournisseur {ref.strip()}") as t:
+                 t.inserer("supplier_invoices", {"id": cible, "party_id": tiers, "project": projet,
+                                                 "reference": ref.strip(), "date": date, "due": due, "currency": monnaie,
+                                                 "amount": mt})
++                t.inserer("pieces_jointes", {"id": db.nouvel_id(), "entite": "supplier_invoice", "entite_id": cible,
++                                             "libelle": "Facture fournisseur", "nom": nom,
++                                             "mime": st.session_state["sf_mime"], "taille": len(contenu),
++                                             "sha256": empreinte, "contenu": contenu,
++                                             "ajoute_par": (auth.utilisateur() or {}).get("id"),
++                                             "ajoute_le": db.maintenant()})
+         except ValueError as e:
+             st.error(str(e))
+         else:
+-            st.session_state.pop("sf_id_new", None)
+-            ui.succes("Facture fournisseur enregistrée, sans mouvement de trésorerie.")
++            for cle in ("sf_id_new", "sf_contenu", "sf_nom", "sf_mime", "sf_lecture"):
++                st.session_state.pop(cle, None)
++            ui.succes("Facture fournisseur enregistrée, avec son justificatif, sans mouvement de trésorerie.")
+ 
+ 
+ @st.dialog("Modifier la facture fournisseur", width="large")

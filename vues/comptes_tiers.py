@@ -1,11 +1,16 @@
 """Comptes tiers : créances clients (balance âgée), dettes et avances fournisseurs, contre-passations."""
 from __future__ import annotations
 
+import datetime as dt
+import hashlib
+import re
+
 import streamlit as st
 
 import auth
 import db
 import gestion_v7 as V
+import lecture_facture as LF
 import regles as R
 import ui
 from vues import devis_factures
@@ -15,43 +20,131 @@ def _filtres() -> dict:
     return st.session_state.setdefault("ct_filtres", {"party": "", "project": "", "currency": "", "from": "", "to": ""})
 
 
+def _lire_facture(s: dict) -> None:
+    """Dès qu'une facture est jointe : lit le document et pré-remplit la saisie, que l'usager vérifie ensuite."""
+    st.session_state.pop("sf_lecture", None)
+    st.session_state.pop("sf_erreur", None)
+    f = st.session_state.get("sf_fichier")
+    if f is None:
+        st.session_state.pop("sf_contenu", None)
+        return
+    contenu = f.getvalue()
+    mime = ui.mime_fichier(contenu)
+    if not contenu or len(contenu) > R.PIECE_MAX or not mime:
+        st.session_state.pop("sf_contenu", None)
+        st.session_state["sf_erreur"] = "Fichier refusé : PDF, JPEG ou PNG de 5 Mo au plus."
+        return
+    st.session_state.update({"sf_contenu": contenu, "sf_nom": f.name, "sf_mime": mime})
+    texte = LF.texte_pdf(contenu) if mime == "application/pdf" else ""
+    fournisseurs = [(c["id"], c["name"]) for c in s["clients"] if set(R.party_roles(c)) & {"supplier", "subcontractor"}]
+    res = LF.extraire(texte, fournisseurs)
+    if res.get("party_id"):
+        st.session_state["sf_t"] = res["party_id"]
+    if res.get("reference"):
+        st.session_state["sf_ref"] = res["reference"]
+    if res.get("date"):
+        st.session_state["sf_d"] = dt.date.fromisoformat(res["date"])
+    if res.get("due"):
+        st.session_state["sf_due"] = dt.date.fromisoformat(res["due"])
+    if res.get("amount"):
+        st.session_state["sf_mt"] = res["amount"] / 100
+    if res.get("currency"):
+        st.session_state["sf_cur"] = res["currency"]
+    trouves, manquants = LF.bilan(res)
+    if trouves:
+        message = "Champs proposés à partir de la facture : " + ", ".join(trouves) + "."
+        if manquants:
+            message += " À saisir : " + ", ".join(manquants) + "."
+    else:
+        message = "Aucun champ lisible dans ce document : saisissez les informations de la facture."
+    st.session_state["sf_lecture"] = message
+
+
 @st.dialog("Facture fournisseur", width="large")
 def facture_fournisseur() -> None:
-    s = R.charger("clients", "projects", "supplier_invoices")
+    s = R.charger("clients", "projects", "supplier_invoices", "supplier_allocations", "supplier_reversals")
     st.caption("Cette saisie crée une dette, sans sortie de caisse et sans dépense payée.")
+    st.file_uploader("Facture * (PDF, JPEG ou PNG, 5 Mo au plus)", type=["pdf", "jpg", "jpeg", "png"],
+                     key="sf_fichier", on_change=_lire_facture, args=(s,))
+    if st.session_state.get("sf_erreur"):
+        st.error(st.session_state["sf_erreur"])
+    elif st.session_state.get("sf_lecture"):
+        st.info(st.session_state["sf_lecture"])
     a, b = st.columns(2)
     with a:
         tiers = ui.choix("Fournisseur *", ui.options_fournisseurs(s), "sf_t", "", vide="Choisir")
-        ref = st.text_input("Référence de la facture *")
+        ref = st.text_input("Référence de la facture *", key="sf_ref")
         date = ui.date_txt("Date de facture *", "sf_d")
         monnaie = ui.devise("Monnaie", "sf_cur")
     with b:
         projet = ui.choix("Chantier *", ui.options_chantiers(s), "sf_p", "", vide="Choisir")
         montant = ui.montant("Montant total *", "sf_mt", 0)
         due = ui.date_txt("Échéance *", "sf_due")
-    # Identifiant réservé : les pièces jointes sont liées à la facture dès leur ajout, avant l'enregistrement
+    # Contrôle en direct : la facture est-elle déjà saisie pour ce fournisseur, et a-t-elle été réglée ?
+    try:
+        montant_apercu = R.cents(montant, "Montant", positif=True)
+    except ValueError:
+        montant_apercu = None
+    contenu = st.session_state.get("sf_contenu")
+    empreinte = hashlib.sha256(contenu).hexdigest() if contenu else None
+    deja = db.requete("select entite_id from pieces_jointes where entite = 'supplier_invoice' and sha256 = :h",
+                      h=empreinte) if empreinte else []
+    if deja:
+        fac = next((i for i in s["supplier_invoices"] if i["id"] == deja[0]["entite_id"]), None)
+        if fac:
+            etat = R.statut_facture_fournisseur(s, fac["party_id"], fac["reference"])
+            st.error(f"Ce fichier est déjà joint à la facture « {fac['reference']} » ({etat['statut']}, "
+                     f"{R.money(etat['paye'], fac['currency'])} réglés). Ne le saisissez pas une seconde fois.")
+    ex = R.statut_facture_fournisseur(s, tiers, ref, montant_apercu)
+    if ex:
+        inv = ex["facture"]
+        detail = (f"Facture « {inv['reference']} » du {inv['date']}, {R.money(inv['amount'], inv['currency'])} : "
+                  f"{ex['statut']} ({R.money(ex['paye'], inv['currency'])} réglés, "
+                  f"reste {R.money(ex['reste'], inv['currency'])}).")
+        if not ex["montant_identique"]:
+            detail += " Le montant saisi est différent de celui de la facture existante."
+        if ex["statut"] == "réglée":
+            st.error(detail + " Cette facture est déjà payée : ne la saisissez pas une seconde fois.")
+        else:
+            st.warning(detail + " Vérifiez qu’il ne s’agit pas d’un doublon avant d’enregistrer.")
+    elif tiers and ref.strip():
+        st.caption("Aucune facture de ce fournisseur avec cette référence : pas de doublon détecté.")
+    # Identifiant réservé : les documents joints sont liés à la facture dès leur ajout
     cible = st.session_state.setdefault("sf_id_new", db.nouvel_id())
     ui.pieces_jointes("supplier_invoice", cible, peut_ajouter=True,
-                      titre="Pièces jointes (facture, bon de commande, bordereau…)")
+                      titre="Autres documents (bon de commande, bordereau… facultatif)")
     if st.button("Enregistrer", type="primary"):
         try:
             mt = R.cents(montant, "Montant", positif=True)
+            if not contenu:
+                raise ValueError("Joignez la facture (PDF, JPEG ou PNG) avant d’enregistrer.")
             if not tiers or not projet or not ref.strip() or due < date:
                 raise ValueError("Renseignez le tiers, le chantier, la référence, le montant et une échéance après la "
                                  "date de facture.")
-            if any(i["party_id"] == tiers and i["reference"].strip().lower() == ref.strip().lower()
-                   for i in s["supplier_invoices"]):
-                raise ValueError("Cette facture existe déjà pour ce fournisseur.")
+            if deja:
+                raise ValueError("Ce fichier est déjà joint à une facture enregistrée.")
+            ex = R.statut_facture_fournisseur(s, tiers, ref, mt)
+            if ex:
+                raise ValueError(f"Cette facture existe déjà pour ce fournisseur ({ex['statut']}, "
+                                 f"{R.money(ex['paye'], ex['facture']['currency'])} réglés).")
             V.guard_legacy(projet)
+            nom = re.sub(r'[\\/:*?"<>|]+', "_", st.session_state.get("sf_nom", "facture"))[:280] or "facture"
             with db.transaction(f"Facture fournisseur {ref.strip()}") as t:
                 t.inserer("supplier_invoices", {"id": cible, "party_id": tiers, "project": projet,
                                                 "reference": ref.strip(), "date": date, "due": due, "currency": monnaie,
                                                 "amount": mt})
+                t.inserer("pieces_jointes", {"id": db.nouvel_id(), "entite": "supplier_invoice", "entite_id": cible,
+                                             "libelle": "Facture fournisseur", "nom": nom,
+                                             "mime": st.session_state["sf_mime"], "taille": len(contenu),
+                                             "sha256": empreinte, "contenu": contenu,
+                                             "ajoute_par": (auth.utilisateur() or {}).get("id"),
+                                             "ajoute_le": db.maintenant()})
         except ValueError as e:
             st.error(str(e))
         else:
-            st.session_state.pop("sf_id_new", None)
-            ui.succes("Facture fournisseur enregistrée, sans mouvement de trésorerie.")
+            for cle in ("sf_id_new", "sf_contenu", "sf_nom", "sf_mime", "sf_lecture"):
+                st.session_state.pop(cle, None)
+            ui.succes("Facture fournisseur enregistrée, avec son justificatif, sans mouvement de trésorerie.")
 
 
 @st.dialog("Modifier la facture fournisseur", width="large")

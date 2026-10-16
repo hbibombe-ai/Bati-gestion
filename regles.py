@@ -382,6 +382,29 @@ def valider_modif_facture_fournisseur(s: dict, facture_id: str, nouvelles: dict)
                              f"({money(paye, i['currency'])}).")
 
 
+def statut_facture_fournisseur(s: dict, party_id: str, reference: str, amount: int | None = None) -> dict | None:
+    """Recherche une facture déjà saisie pour ce fournisseur avec la même référence et dit si elle est réglée.
+
+    Renvoie None si aucune facture ne correspond. Sinon : la facture, le montant réglé, le reste dû, le statut
+    (« non réglée », « partiellement réglée » ou « réglée ») et si le montant saisi est identique."""
+    ref = str(reference or "").strip().lower()
+    if not party_id or not ref:
+        return None
+    inv = next((i for i in s.get("supplier_invoices", [])
+                if i["party_id"] == party_id and str(i["reference"]).strip().lower() == ref), None)
+    if inv is None:
+        return None
+    paye = supplier_paid(s, inv["id"])
+    if paye <= 0:
+        statut = "non réglée"
+    elif paye < inv["amount"]:
+        statut = "partiellement réglée"
+    else:
+        statut = "réglée"
+    return {"facture": inv, "paye": paye, "reste": max(inv["amount"] - paye, 0), "statut": statut,
+            "montant_identique": amount is None or amount == inv["amount"]}
+
+
 # ------------------------------------------------------------------ rapports
 def erp_forecast(s: dict, as_of: str) -> dict:
     res = {c: {"balance": 0, "overdueIn": 0, "overdueOut": 0, "undatedIn": 0,
