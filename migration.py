@@ -50,7 +50,7 @@ def _deserial(v):
 # ------------------------------------------------------------------ sauvegarde de cette application
 def export_json(avec_pieces: bool = True) -> bytes:
     data = {"format": FORMAT, "exported_at": dt.datetime.now().isoformat(timespec="seconds"),
-            "company": R.company(), "v7_settings": {k: db.parametre(k) for k in ("v7_policy", "v7_fiscal", "imports_limites")}, "tables": {}}
+            "company": R.company(), "v7_settings": {k: db.parametre(k) for k in ("v7_policy", "v7_fiscal", "imports_limites", "achats_politique")}, "tables": {}}
     for t in METIER + OPTIONNELLES:
         sans = () if (avec_pieces or t not in ("pieces", "pieces_jointes")) else ("content",)
         data["tables"][t] = [{k: _serial(v) for k, v in r.items()} for r in db.tout(t, sans=sans)]
@@ -78,7 +78,7 @@ def _remplacer(tables: dict, company: dict | None, resume: str, v7_settings=None
     with db.transaction(resume) as t:
         for nom in reversed(METIER + OPTIONNELLES):
             t.cx.execute(db.TABLES[nom].delete())
-        for cle in ("v7_policy", "v7_fiscal", "imports_limites"):
+        for cle in ("v7_policy", "v7_fiscal", "imports_limites", "achats_politique"):
             t.parametre(cle, (v7_settings or {}).get(cle))
         if company:
             t.parametre("company", company)

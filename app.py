@@ -98,8 +98,8 @@ ui.appliquer_style()
 # ------------------------------------------------------------------ navigation
 try:
     from vues import (accueil, audit, caisse, chantiers, compte, comptes_tiers, depenses,  # noqa: E402
-                      devis_factures, dossiers, justificatifs, paie, personnel, presence_kobo, rapports,
-                      recherche, reprise_historique, sauvegarde, societe, tiers, utilisateurs)
+                      demandes_achat, devis_factures, dossiers, justificatifs, paie, personnel, presence_kobo,
+                      rapports, recherche, reprise_historique, sauvegarde, societe, tiers, utilisateurs)
     from vues import memo_v7
     from vues import imports as centre_imports
 except ModuleNotFoundError as e:
@@ -141,6 +141,8 @@ PAGES = [
     ("Projets & Chantiers", "Chantiers", "chantiers", "construction", ["chantiers"], chantiers.page),
     ("Projets & Chantiers", "DQE, situations, qualité", "dossiers-chantier", "fact_check", ["projets"],
      espace("projets")),
+    ("Achats & Stocks", "Demandes d’achat", "demandes-achat", "request_page",
+     ["demandes_achat", "approbation_chantier", "chiffrage_achats", "approbation_coordonnateur"], demandes_achat.page),
     ("Achats & Stocks", "Achats", "achats", "shopping_cart", ["achats"], espace("achats")),
     ("Achats & Stocks", "Stocks", "stocks", "inventory_2", ["achats"], espace("stocks")),
     ("Achats & Stocks", "Matériel et charroi", "charroi", "local_shipping", ["charroi"], espace("charroi")),
@@ -180,7 +182,7 @@ for section, titre, url, icone, modules, fn in PAGES:
 
 st.logo(ui.LOGO_SOMBRE, size="large", icon_image=ui.ICONE)
 with st.sidebar:
-    st.caption(f"Connecté : **{utilisateur['nom']}**  \n{auth.ROLES.get(utilisateur['role'], utilisateur['role'])}")
+    st.caption(f"Connecté : **{utilisateur['nom']}**  \n{auth.libelle_poste(utilisateur['id'], utilisateur['role'])}")
     if st.button("Se déconnecter", icon=":material/logout:", width="stretch"):
         auth.deconnecter()
         st.rerun()

@@ -66,6 +66,12 @@ class Etat:
         self.pieces = lire("pieces", ("content",))
         self.movements = lire("movements")
         self.expenses = lire("expenses")
+        # Chantiers affectés par usager (périmètre des profils) : lus ici pour ne pas ouvrir de seconde connexion.
+        self.perimetres = {int(r["cle"].split(":")[1]): r["valeur"] for r in lire("settings")
+                           if r["cle"].startswith("projets_utilisateur:") and isinstance(r["valeur"], list) and r["valeur"]}
+
+    def sur_chantier(self, u: dict, projet: str) -> bool:
+        return u.get("role") == "admin" or u.get("id") not in self.perimetres or projet in self.perimetres[u["id"]]
 
     def exclure_lots(self, ids: set) -> None:
         """Ignore les effets de lots préparés destinés à être remplacés (aperçu d'un lot corrigé)."""

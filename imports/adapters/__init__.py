@@ -8,7 +8,7 @@ trésorerie et comptabilité, pointages, pièces.
 """
 from __future__ import annotations
 
-from imports.adapters import budgets, documents, referentiels, reliquats, tresorerie
+from imports.adapters import achats, budgets, documents, referentiels, reliquats, tresorerie
 
 ADAPTATEURS = {
     "tiers": referentiels.TIERS,
@@ -18,6 +18,8 @@ ADAPTATEURS = {
     "budgets": budgets.BUDGETS,
     "cumuls": budgets.CUMULS,
     "besoins": budgets.BESOINS,
+    "demandes_achat": achats.DEMANDES,
+    "chiffrage_achats": achats.CHIFFRAGE,
     "fournisseurs": reliquats.FOURNISSEURS,
     "tresorerie": tresorerie.COMPTES,
     "comptabilite": tresorerie.ECRITURES,

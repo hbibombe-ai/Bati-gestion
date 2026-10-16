@@ -2,6 +2,8 @@
 
 Le **Circuit financier V7** intègre désormais budgets DQE, validations N0 → N1 → N2 → N3 → DG, paiements partiels, avances, écritures et préparation fiscale RDC. Lire [le guide de mise en service](INTEGRATION_MEMO.md) avant activation. Le mémo complet est téléchargeable dans l’application. Les recommandations fiscales restent à vérifier pour le régime effectif de MY DESTINY.
 
+Le **circuit des demandes d’achat** (chantier → chef de chantier → achats → coordonnateur → circuit V7) et les **postes et profils** de la rubrique Utilisateurs sont décrits dans [CIRCUIT_ACHATS.md](CIRCUIT_ACHATS.md).
+
 Logiciel de gestion de MY DESTINY SARL pour ses activités de construction : chantiers, devis et factures, dépenses et justificatifs, caisse et trésorerie, clients et fournisseurs, personnel, pointage et paie, ainsi que les dossiers d'achats, de stocks, de matériel, de comptabilité et les registres.
 
 C'est la réécriture en Python ([Streamlit](https://streamlit.io)) du prototype BatiGestion, qui fonctionnait dans un seul fichier HTML. Les règles de gestion du prototype ont été reprises à l'identique :
@@ -33,12 +35,14 @@ C'est la réécriture en Python ([Streamlit](https://streamlit.io)) du prototype
 | Conducteur de travaux | Chantiers, dépenses de chantier, dépôt des justificatifs, pointages, achats, stocks, matériel, dossiers de chantier |
 | Consultation | Lecture des chantiers, des comptes et des rapports, sans rien modifier et sans voir les salaires |
 
+Chaque compte reçoit aussi un **poste** (13 postes standards ou profil personnalisé) qui pré-remplit ses accès, et éventuellement des **chantiers affectés**. Les accès réglés pour une personne restent prioritaires sur le modèle.
+
 ## Rubriques
 
 - **Accueil :** vue d'ensemble, recherche globale, rapports et alertes (chantiers en retard, créances et dettes échues, contrats à échéance, prévision de trésorerie à 7, 30, 60 et 90 jours).
 - **Commercial :** devis, factures (conversion d'un devis en facture, règlements), prospects, appels d'offres, contrats, sous-traitance.
 - **Chantiers :** budget, avancement et décaissements par monnaie ; lignes DQE, situations de travaux, avenants, HSE et qualité.
-- **Achats et stocks :** demandes, engagements, commandes, réceptions, magasins, articles, transferts, consommations, inventaires.
+- **Achats et stocks :** demandes d’achat multi-chantiers (chiffrage, coordonnateur, commandes groupées), demandes, engagements, commandes, réceptions, magasins, articles, transferts, consommations, inventaires.
 - **Matériel et charroi :** équipements et véhicules, maintenance, carburant.
 - **RH et paie :**
   - fiches du personnel, contrats, affectations datées, pointage quotidien ;

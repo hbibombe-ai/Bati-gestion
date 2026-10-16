@@ -15,7 +15,8 @@ import db
 import regles as R
 
 LEVELS = ('N1', 'N2', 'N3', 'DG')
-KINDS = ('budget', 'operation', 'account', 'entry', 'reconciliation', 'fiscal', 'rate', 'delegation', 'invoice', 'payment', 'carryover')
+KINDS = ('budget', 'operation', 'account', 'entry', 'reconciliation', 'fiscal', 'rate', 'delegation', 'invoice', 'payment', 'carryover',
+         'purchase_request')  # purchase_request : demande d'achat matériel et matériaux (achats_circuit.py)
 CHART = {'101':'Capital social','16':'Emprunts','23':'Bâtiments','24':'Matériel et mobilier',
  '28':'Amortissements','32':'Matières premières','4011':'Fournisseurs','4013':'Sous-traitants',
  '4017':'Retenues de garantie fournisseurs','4091':'Avances fournisseurs','411':'Clients',
@@ -268,10 +269,13 @@ def approve(id_,reason,exception=False,reject=False):
 
 def order(id_,ref,date_):
     u=actor(['admin','finance']);date(date_)
-    with db.transaction('Bon de commande V7') as t:
-        r=get(t,id_,'operation');d=deepcopy(r['data'])
-        if d['status']!='Approuvée' or not ref.strip():raise ValueError('Approbation complète et référence de commande requises.')
-        d.update(order=dict(ref=ref,date=date_,user=u['id']),status='Commandée');event(d,u,'Commande',ref);save(t,r,d)
+    with db.transaction('Bon de commande V7') as t:_order_tx(t,u,id_,ref,date_)
+
+def _order_tx(t,u,id_,ref,date_,note=''):
+    """Commande d'une opération approuvée, dans une transaction existante (commande simple ou groupée)."""
+    r=get(t,id_,'operation');d=deepcopy(r['data'])
+    if d['status']!='Approuvée' or not ref.strip():raise ValueError('Approbation complète et référence de commande requises.')
+    d.update(order=dict(ref=ref,date=date_,user=u['id']),status='Commandée');event(d,u,'Commande',note or ref);save(t,r,d)
 
 def receive(id_,ref,date_,accepted):
     u=actor(['admin','chantier']);date(date_);amount(accepted,True)

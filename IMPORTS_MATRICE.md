@@ -9,6 +9,8 @@ Livraison du 10 octobre 2026. La matrice distingue ce qui est réalisé, ce qui 
 | DQE et budgets | Budgets, Lignes_Budget | Oui | Budget V7 « À approuver », approuvé à l’activation DG | Budget à approuver (circuit V7 habituel) | **Réalisé** |
 | Cumuls budgétaires | Cumuls_Budget | Oui | Coûts exécutés et engagements ouverts repris une seule fois | — | **Réalisé** |
 | Besoins de dépense | Besoins | Oui | — | Une demande N0 en brouillon par ligne | **Réalisé** |
+| Demandes d’achat | Demandes_Achat, Lignes_Demande_Achat | Oui | — | Une demande d’achat en brouillon par référence (prix facultatifs) | **Réalisé** (16 octobre 2026) |
+| Chiffrage des demandes | Chiffrage_Achats | — | — | Fournisseur, prix, stock ; puis coordonnateur ou circuit V7 | **Réalisé** (16 octobre 2026) |
 | Factures fournisseurs | Factures_Fournisseurs, Paiements | Oui | Initial et paiements en archives ; dette restante reprise et réglable | — | **Réalisé** (reliquats) |
 | Avances | Avances, Paiements | Oui | Reliquat à justifier ou restituer, preuve exigée | — | **Réalisé** (reliquats) |
 | Trésorerie | Comptes_Tresorerie | Oui | Compte V7 et solde d’ouverture rapproché, activé par la DG | — | **Réalisé** |

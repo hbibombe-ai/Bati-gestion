@@ -20,8 +20,9 @@ EFFETS_MODE = {
                 "les budgets actifs ou le grand livre.",
     "reprise": "Prépare des soldes, cumuls, reliquats et engagements restants à la date de bascule. Rien n'est actif "
                "avant la validation Finance puis l'activation par la DG (personnes distinctes de l'importateur).",
-    "en_cours": "Crée des fiches de référence, des pointages ou des demandes N0 en brouillon qui suivent ensuite "
-                "le circuit habituel (N1 → N2 → N3 → DG). Aucune validation ni aucun paiement n'est créé.",
+    "en_cours": "Crée des fiches de référence, des pointages, des demandes N0 ou des demandes d’achat en brouillon qui "
+                "suivent ensuite le circuit habituel (N1 → N2 → N3 → DG). Aucune validation ni aucun paiement n'est "
+                "créé ; le chiffrage d’une demande validée par le chantier suit les mêmes règles qu’à l’écran.",
 }
 PARAMETRES = ["version_modele", "source_systeme", "mode_import", "date_bascule", "reference_lot"]
 ENTITES_DOCUMENT = ["tiers", "chantier", "personnel", "facture_fournisseur", "avance", "besoin", "budget",
@@ -105,6 +106,25 @@ FEUILLES: dict[str, Feuille] = {f.nom: f for f in [
             relations=(("chantier_ref", "chantier"), ("beneficiaire_ref", "tiers")),
             modes=frozenset({"archives", "en_cours"}), module="depenses", roles=("admin", "finance", "chantier"),
             entite="besoin"),
+    Feuille("Demandes_Achat", (C("reference_externe", "ref", True, aide="Référence unique de la demande, ex. DA-CH01-0042"),
+                               C("chantier_ref", "ref", True), C("objet", "text", True, max_len=300),
+                               C("date_besoin", "date", True), C("lieu_livraison", max_len=300),
+                               C("devise", "enum", True, DEV, aide="Devise du budget DQE du chantier")),
+            relations=(("chantier_ref", "chantier"),), modes=frozenset({"archives", "en_cours"}),
+            module="demandes_achat", entite="demande_achat"),
+    Feuille("Lignes_Demande_Achat", (C("demande_ref", "ref", True), C("numero_ligne", "int", True),
+                                     C("code_dqe", "ref", True), C("article", "text", True, max_len=300),
+                                     C("unite", max_len=30), C("quantite", "qty", True),
+                                     C("prix_unitaire", "money", aide="Facultatif : prix proposé par le chantier"),
+                                     C("fournisseur_ref", "ref", aide="Facultatif : code du fournisseur proposé"),
+                                     C("note", max_len=500)),
+            cle="", parent=("demande_ref", "Demandes_Achat"), modes=frozenset({"archives", "en_cours"}),
+            module="demandes_achat"),
+    Feuille("Chiffrage_Achats", (C("demande_ref", "ref", True, aide="Référence d’une demande validée par le chantier"),
+                                 C("numero_ligne", "int", True), C("fournisseur_ref", "ref", aide="Code du fournisseur retenu"),
+                                 C("prix_unitaire", "money", aide="Prix unitaire retenu ; vide = prix proposé confirmé"),
+                                 C("quantite_stock", "qty", aide="Quantité servie par le stock (facultatif)")),
+            cle="", modes=frozenset({"en_cours"}), module="chiffrage_achats"),
     Feuille("Commandes", (C("reference_externe", "ref", True), C("besoin_ref", "ref"), C("tiers_ref", "ref"),
                           C("date", "date", True), C("devise", "enum", True, DEV), C("montant", "money", True)),
             module="achats", statut="préparatoire"),
@@ -236,6 +256,10 @@ FONCTIONS: dict[str, Fonction] = {f.cle: f for f in [
     Fonction("budgets", "DQE et budgets", ("Budgets", "Lignes_Budget", "Cumuls_Budget"),
              "Budgets V7 à approuver ; cumuls de coûts et engagements à la date de bascule."),
     Fonction("besoins", "Besoins de dépense", ("Besoins",), "Une demande N0 en brouillon par ligne."),
+    Fonction("demandes_achat", "Demandes d’achat matériel et matériaux", ("Demandes_Achat", "Lignes_Demande_Achat"),
+             "Une demande d’achat en brouillon par référence, prix facultatifs ; à soumettre au chef de chantier."),
+    Fonction("chiffrage_achats", "Chiffrage des demandes d’achat", ("Chiffrage_Achats",),
+             "Fournisseur, prix et quantité servie par le stock pour des demandes validées par le chantier."),
     Fonction("achats", "Achats et réceptions", ("Commandes", "Receptions"), "Archives seulement (préparatoire)."),
     Fonction("fournisseurs", "Factures fournisseurs, paiements et avances",
              ("Factures_Fournisseurs", "Paiements", "Avances"),
