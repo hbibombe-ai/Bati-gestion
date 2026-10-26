@@ -161,7 +161,7 @@ def rapport_excel(rows: list[dict], pcs: dict) -> bytes:
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Justificatifs"
-    ws.append([f"{R.company().get('name', 'MY DESTINY')} — Suivi des justificatifs"])
+    ws.append([f"{(R.company().get('name') or 'Bâti Gestion')} — Suivi des justificatifs"])
     ws.append(["Édité le", R.today()])
     ws.append(["Référence", "Chantier", "Date", "Responsable", "Monnaie", "Montant", "Justifié (validé)", "Reste",
                "Statut", "Pièces", "Origine"])

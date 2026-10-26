@@ -1,6 +1,8 @@
 """Société MY DESTINY : identité, adresses qualifiées, en-tête des documents et historique des modifications."""
 from __future__ import annotations
 
+import json
+
 import streamlit as st
 
 import auth
@@ -13,8 +15,9 @@ import ui
 def formulaire(reference: bool = False) -> None:
     c = R.company()
     if reference:
-        c = {**c, **{k: v for k, v in R.V7_COMPANY.items() if k != "v7"}, "v7": dict(R.V7_COMPANY["v7"])}
-        st.info("Fiche préremplie depuis le cahier des charges V7 fourni par MY DESTINY. Vérifiez puis enregistrez.")
+        importee = st.session_state.get("fiche_importee") or {}
+        c = {**c, **{k: v for k, v in importee.items() if k != "v7"}, "v7": dict(importee.get("v7") or {})}
+        st.info("Fiche préremplie depuis le fichier importé. Vérifiez puis enregistrez.")
     v = c.get("v7") or {}
     k = "ref" if reference else "mod"
     a, b = st.columns(2)
@@ -34,11 +37,12 @@ def formulaire(reference: bool = False) -> None:
     with b:
         bureau = ui.choix("Adresse du bureau", adr, f"so_bur_{k}", v.get("operatingAddress", ""))
     motif = st.text_input("Motif de la mise à jour *",
-                          value="Reprise du référentiel V7 fourni par MY DESTINY" if reference else "", key=f"so_mot_{k}")
+                          value="Import de la fiche société" if reference else "", key=f"so_mot_{k}")
     st.caption("Les deux adresses sont conservées. Seule une adresse qualifiée comme siège figure dans les nouveaux en-têtes. "
                "Les documents déjà munis d’un en-tête mémorisé le conservent. Le bénéficiaire effectif et l’effectif "
                "restent internes.")
     if st.button("Enregistrer", type="primary"):
+        st.session_state.pop("fiche_importee", None)
         try:
             if not motif.strip():
                 raise ValueError("Indiquez le motif de cette modification.")
@@ -63,17 +67,54 @@ def formulaire(reference: bool = False) -> None:
             ui.succes("Référentiel société enregistré.")
 
 
+CHAMPS_FICHE = {"name", "phone", "registration", "address", "defaultCurrency", "v7"}
+
+
+def fiche_json(c: dict) -> bytes:
+    fiche = {k: v for k, v in c.items() if k in CHAMPS_FICHE}
+    return json.dumps({"format": "bati-gestion-fiche-societe", "version": 1, "fiche": fiche}, ensure_ascii=False,
+                      indent=1).encode("utf-8")
+
+
+def lire_fiche(contenu: bytes) -> dict:
+    """Fiche société exportée par l'application (format contrôlé, champs connus seulement)."""
+    try:
+        d = json.loads(contenu.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise ValueError("Fichier illisible : fiche JSON exportée par Bâti Gestion attendue.") from None
+    if not isinstance(d, dict) or d.get("format") != "bati-gestion-fiche-societe" or not isinstance(d.get("fiche"), dict):
+        raise ValueError("Ce fichier n’est pas une fiche société Bâti Gestion.")
+    f = {k: v for k, v in d["fiche"].items() if k in CHAMPS_FICHE}
+    connus = {k for k, _ in R.V7_FIELDS} | {"officialAddress", "operatingAddress"}
+    f["v7"] = {k: str(v) for k, v in (f.get("v7") or {}).items() if k in connus}
+    if any(not isinstance(f.get(k, ""), str) for k in ("name", "phone", "registration", "address")):
+        raise ValueError("Champs de la fiche invalides.")
+    return f
+
+
 def page() -> None:
     auth.exiger("societe")
-    ui.en_tete("Société MY DESTINY", "Identité, coordonnées et historique des modifications.")
+    ui.en_tete("Société", "Identité, coordonnées et historique des modifications.")
     c = R.company()
     snap = R.company_snapshot(c)
     if auth.modifie("societe"):
         a, b = ui.rangee(2)
         if a.button("Modifier la société", type="primary", icon=":material/edit:"):
             formulaire()
-        if b.button("Préremplir depuis le cahier V7", icon=":material/auto_fix_high:"):
-            formulaire(reference=True)
+        ui.telecharger("Exporter la fiche (JSON)", fiche_json(c), "fiche-societe.json", "application/json",
+                       key="so_export")
+        with st.expander("Importer une fiche société (JSON)", icon=":material/upload_file:"):
+            st.caption("Les données d’identité ne sont plus écrites dans le code de l’application : elles se saisissent "
+                       "ici ou s’importent depuis le fichier de fiche fourni par la direction, puis s’enregistrent avec "
+                       "un motif.")
+            f = st.file_uploader("Fichier de fiche société", type=["json"], key="so_import")
+            if f is not None and st.button("Préremplir depuis ce fichier", icon=":material/auto_fix_high:"):
+                try:
+                    st.session_state["fiche_importee"] = lire_fiche(f.getvalue())
+                except ValueError as e:
+                    st.error(str(e))
+                else:
+                    formulaire(reference=True)
     st.subheader("En-tête des documents")
     with st.container(border=True):
         st.markdown(f"**{snap['name']}**  \n{snap['address'] or 'Adresse officielle à qualifier'}  \n{snap['phone']}  \n"

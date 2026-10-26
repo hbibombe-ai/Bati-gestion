@@ -10,4 +10,5 @@ def ajouter(meta):
         sa.Column('currency', sa.String(3), nullable=False),
         sa.Column('data', sa.JSON, nullable=False),
         sa.Column('version', sa.Integer, nullable=False, default=1),
-        sa.UniqueConstraint('kind', 'ref', name='v7_reference_unique'))
+        sa.UniqueConstraint('kind', 'ref', name='v7_reference_unique'),
+        sa.Index('ix_v7_records_kind_project', 'kind', 'project'))

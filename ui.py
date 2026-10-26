@@ -237,15 +237,29 @@ def carte(titre: str, valeur_html: str, note: str = "", accent: bool = False) ->
             f'<div class="n">{valeur_html}</div><div class="m">{_esc(note)}</div></div>')
 
 
+def consolide(totaux: dict[str, int]) -> str:
+    """Total converti au dernier taux du jour (affichage seulement) ; vide si inutile ou indisponible."""
+    try:
+        import devises
+        return devises.texte_consolide(totaux)
+    except Exception:  # noqa: BLE001 — l'affichage consolidé ne doit jamais empêcher l'affichage des totaux
+        return ""
+
+
 def montants_html(totaux: dict[str, int]) -> str:
-    """Totaux séparés par monnaie, sans conversion."""
+    """Totaux séparés par monnaie, sans conversion, puis le total consolidé indicatif."""
+    c = consolide(totaux)
     return '<div class="bg-montants">' + "<br>".join(
-        f"<b>{_esc(R.money(totaux.get(c, 0), c))}</b>" for c in R.CURRENCIES) + "</div>"
+        f"<b>{_esc(R.money(totaux.get(c_, 0), c_))}</b>" for c_ in R.CURRENCIES) + (
+        f'<br><span style="font-size:.8em;opacity:.75">{_esc(c)}</span>' if c else "") + "</div>"
 
 
-def montants_texte(totaux: dict[str, int], seulement_non_nuls: bool = False) -> str:
+def montants_texte(totaux: dict[str, int], seulement_non_nuls: bool = False, consolide_aussi: bool = False) -> str:
     parts = [R.money(totaux.get(c, 0), c) for c in R.CURRENCIES if not seulement_non_nuls or totaux.get(c)]
-    return " · ".join(parts) or R.money(0, R.company().get("defaultCurrency", "USD"))
+    texte = " · ".join(parts) or R.money(0, R.company().get("defaultCurrency", "USD"))
+    if consolide_aussi and (c := consolide(totaux)):
+        texte += f" ({c})" if not c.startswith("≈") else f" · {c}"
+    return texte
 
 
 # ------------------------------------------------------------------ champs

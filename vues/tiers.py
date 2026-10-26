@@ -111,8 +111,8 @@ def page() -> None:
                 f"  \n{p.get('registration') or ''}")
     if auth.voit("commercial"):
         st.markdown("**Créances sur factures :** " + ui.montants_texte(
-            R.totals_by_currency(factures, lambda x: R.total(x) - x["paid"]), True))
+            R.totals_by_currency(factures, lambda x: R.total(x) - x["paid"]), True, consolide_aussi=True))
     st.markdown("**Chantiers liés :** " + (", ".join(projets) if projets else "aucun"))
     if auth.voit("depenses"):
         st.markdown(f"**Dépenses rattachées :** {len(depenses)} · "
-                    + ui.montants_texte(R.totals_by_currency(depenses, lambda e: e["amount"]), True))
+                    + ui.montants_texte(R.totals_by_currency(depenses, lambda e: e["amount"]), True, consolide_aussi=True))

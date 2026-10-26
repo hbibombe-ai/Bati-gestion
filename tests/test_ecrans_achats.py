@@ -1,4 +1,4 @@
-"""Ouverture des écrans Demandes d'achat et Utilisateurs avec Streamlit AppTest (base SQLite temporaire)."""
+"""Ouverture des écrans Achats et stock, Comptabilité générale, Utilisateurs et Taux avec Streamlit AppTest (base SQLite temporaire)."""
 import os
 import tempfile
 import unittest
@@ -23,7 +23,7 @@ class EcransAchats(unittest.TestCase):
         return at
 
     def test_demandes_et_utilisateurs_pour_chaque_role(self):
-        for module in ("vues.demandes_achat", "vues.utilisateurs"):
+        for module in ("vues.achats_stock", "vues.comptabilite_generale", "vues.utilisateurs", "vues.taux"):
             for role in ("admin", "finance", "rh", "chantier", "lecteur"):
                 self.ouvrir(module, role)
 

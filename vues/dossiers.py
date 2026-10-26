@@ -103,6 +103,10 @@ def _ao_resume(d: dict) -> str:
     return statut
 
 
+# Mémo V8, § 5.5 : les dossiers préparatoires remplacés par le circuit d'achat et le stock permanent passent en lecture.
+LECTURE_SEULE_V8 = {"demandes", "commandes", "receptions", "magasins", "articles"}
+
+
 def page_espace(cle: str) -> None:
     titre, types = R.V7_SPACES[cle]
     module = module_de(types[0])
@@ -114,7 +118,11 @@ def page_espace(cle: str) -> None:
                      format_func=lambda t: f"{R.ERP_DOSSIERS[t]['label']} ({compte[t]})", key=f"pill_{cle}") or types[0]
     st.session_state[f"esp_{cle}"] = type_
     spec = R.ERP_DOSSIERS[type_]
-    ecrit = auth.modifie(module)
+    ecrit = auth.modifie(module) and type_ not in LECTURE_SEULE_V8
+    if type_ in LECTURE_SEULE_V8:
+        st.info("Dossier préparatoire en lecture seule depuis la V8 : utilisez la rubrique « Achats et stock » "
+                "(demandes à lignes d’articles, commandes, réceptions, référentiel). Les dossiers ouverts se reprennent "
+                "par le centre d’import.")
     rows = sorted([d for d in s["erp_dossiers"] if d["type"] == type_], key=lambda d: d["ref"])
     a, b = ui.rangee(2)
     if ecrit and a.button("Ajouter un dossier", type="primary", icon=":material/add:", key=f"add_{cle}"):

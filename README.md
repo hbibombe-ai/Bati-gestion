@@ -2,13 +2,13 @@
 
 Le **Circuit financier V7** intègre désormais budgets DQE, validations N0 → N1 → N2 → N3 → DG, paiements partiels, avances, écritures et préparation fiscale RDC. Lire [le guide de mise en service](INTEGRATION_MEMO.md) avant activation. Le mémo complet est téléchargeable dans l’application. Les recommandations fiscales restent à vérifier pour le régime effectif de MY DESTINY.
 
-Le **circuit des demandes d’achat** (chantier → chef de chantier → achats → coordonnateur → circuit V7) et les **postes et profils** de la rubrique Utilisateurs sont décrits dans [CIRCUIT_ACHATS.md](CIRCUIT_ACHATS.md).
+**V8 — lot 0, achats et stock, socle comptable :** voir [EXPLOITATION.md](EXPLOITATION.md) (migrations, sauvegardes, fiche société) et [ACHATS_STOCK_V8.md](ACHATS_STOCK_V8.md) (circuit d’achat du mémo V8, stock permanent, écritures STK / ACH / BQ, postes et profils) et [COMPTABILITE_V8.md](COMPTABILITE_V8.md) (comptabilisation du circuit V7, de la caisse, des dépenses et des tiers) et [CAISSE_V8.md](CAISSE_V8.md) (soldes de caisse, sorties plafonnées au solde, arrêtés de caisse).
 
 Logiciel de gestion de MY DESTINY SARL pour ses activités de construction : chantiers, devis et factures, dépenses et justificatifs, caisse et trésorerie, clients et fournisseurs, personnel, pointage et paie, ainsi que les dossiers d'achats, de stocks, de matériel, de comptabilité et les registres.
 
 C'est la réécriture en Python ([Streamlit](https://streamlit.io)) du prototype BatiGestion, qui fonctionnait dans un seul fichier HTML. Les règles de gestion du prototype ont été reprises à l'identique :
 - montants en centimes ;
-- trois monnaies tenues séparément (USD, CDF, EUR), sans conversion automatique ;
+- trois monnaies tenues séparément (USD, CDF, EUR), sans conversion des écritures ; les totaux affichent aussi un montant consolidé indicatif au taux du jour (voir [DEVISES.md](DEVISES.md)) ;
 - aucun taux fiscal ou social inventé ;
 - en-tête de la société figé sur chaque document au moment de sa création ;
 - contre-passation des paiements fournisseurs plutôt que leur suppression.
@@ -42,7 +42,7 @@ Chaque compte reçoit aussi un **poste** (13 postes standards ou profil personna
 - **Accueil :** vue d'ensemble, recherche globale, rapports et alertes (chantiers en retard, créances et dettes échues, contrats à échéance, prévision de trésorerie à 7, 30, 60 et 90 jours).
 - **Commercial :** devis, factures (conversion d'un devis en facture, règlements), prospects, appels d'offres, contrats, sous-traitance.
 - **Chantiers :** budget, avancement et décaissements par monnaie ; lignes DQE, situations de travaux, avenants, HSE et qualité.
-- **Achats et stocks :** demandes d’achat multi-chantiers (chiffrage, coordonnateur, commandes groupées), demandes, engagements, commandes, réceptions, magasins, articles, transferts, consommations, inventaires.
+- **Achats et stocks :** besoins et demandes d’achat à lignes d’articles (N1 → DG), commandes regroupées, réceptions, factures à 3 voies, stock permanent au CMUP ; anciens dossiers en lecture : demandes, engagements, commandes, réceptions, magasins, articles, transferts, consommations, inventaires.
 - **Matériel et charroi :** équipements et véhicules, maintenance, carburant.
 - **RH et paie :**
   - fiches du personnel, contrats, affectations datées, pointage quotidien ;

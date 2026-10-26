@@ -414,7 +414,7 @@ def page() -> None:
                 else:
                     versement()
         st.markdown("**Reste à payer :** " + ui.montants_texte(R.totals_by_currency(
-            factures, lambda x: x["amount"] - R.supplier_paid(s, x["id"]))) + "  \n**Avances non affectées :** "
+            factures, lambda x: x["amount"] - R.supplier_paid(s, x["id"])), consolide_aussi=True) + "  \n**Avances non affectées :** "
             + ui.montants_texte(R.totals_by_currency(paiements, lambda p: R.supplier_advance(s, p["id"]))))
         st.caption("Enregistrement des paiements déjà effectués. Ne ressaisissez pas un paiement déjà présent dans "
                    "Dépenses ou le journal. Les avances restent séparées des dettes jusqu’à leur affectation.")

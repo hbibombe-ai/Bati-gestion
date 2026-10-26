@@ -1,6 +1,7 @@
 """Base de données centrale de Bâti Gestion.
 
-En local : un fichier SQLite (donnees/bati_gestion.db), créé automatiquement.
+En local : un fichier SQLite (donnees/bati_gestion.db). Le schéma est créé et mis à jour par les migrations
+Alembic du dossier migrations/ (lot 0 V8).
 En ligne : PostgreSQL, dont l'adresse est donnée dans les secrets ([database] url) ou DATABASE_URL.
 
 Les montants sont des entiers en centimes, comme dans le prototype : aucun arrondi flottant.
@@ -318,11 +319,15 @@ from schema_v7 import ajouter
 ajouter(meta)
 from imports.tables import ajouter as ajouter_imports
 ajouter_imports(meta)
+from schema_v8 import ajouter as ajouter_v8, ajouter_caisse, ajouter_compta
+ajouter_v8(meta)
+ajouter_compta(meta)
+ajouter_caisse(meta)
 
 TABLES = {t.name: t for t in meta.sorted_tables}
 NOMS_OBJETS = {
     "clients": "Tiers", "projects": "Chantier", "quotes": "Devis", "invoices": "Facture",
-    "expenses": "Dépense", "movements": "Mouvement de trésorerie", "supplier_invoices": "Facture fournisseur",
+    "expenses": "Dépense", "movements": "Mouvement de trésorerie", "caisse_arretes": "Arrêté de caisse", "supplier_invoices": "Facture fournisseur",
     "supplier_payments": "Paiement fournisseur", "supplier_allocations": "Affectation d'avance",
     "supplier_reversals": "Contre-passation", "personnel": "Personnel", "attendance": "Pointage",
     "kobo_pointages": "Pointage KoboCollect",
@@ -330,6 +335,14 @@ NOMS_OBJETS = {
     "history_batches": "Lot historique", "users": "Utilisateur", "settings": "Paramètre",
     "v7_records": "Circuit V7", "import_lots": "Lot d’import", "import_previews": "Aperçu d’import",
     "import_mappings": "Correspondance d’import",
+    "stk_familles": "Famille d’articles", "stk_articles": "Article", "stk_magasins": "Magasin",
+    "stk_soldes": "Solde de stock", "stk_mouvements": "Mouvement de stock", "stk_bons_sortie": "Bon de sortie",
+    "stk_bon_sortie_lignes": "Ligne de bon de sortie", "stk_reservations": "Réservation de stock",
+    "ach_demandes": "Demande d’achat", "ach_demande_lignes": "Ligne de demande d’achat", "ach_commandes": "Bon de commande",
+    "ach_commande_lignes": "Ligne de commande", "ach_receptions": "Réception", "ach_reception_lignes": "Ligne de réception",
+    "ach_factures": "Facture d’achat", "ach_facture_lignes": "Ligne de facture d’achat",
+    "cpt_comptes": "Compte", "cpt_journaux": "Journal", "cpt_periodes": "Période comptable", "cpt_pieces": "Pièce comptable",
+    "cpt_lignes": "Ligne d’écriture", "regles_comptables": "Règle comptable",
 }
 
 
@@ -370,8 +383,29 @@ def moteur() -> sa.Engine:
             conn.execute("PRAGMA foreign_keys=ON")
     else:
         eng = sa.create_engine(url, pool_pre_ping=True, pool_size=5, max_overflow=5)
-    meta.create_all(eng)
+    migrer(eng)
     return eng
+
+
+def migrer(eng: sa.Engine) -> None:
+    """Met le schéma à jour par les migrations Alembic versionnées (dossier migrations/), au lieu de la
+    création implicite des tables. Une base existante est reprise par la révision de base sans perte."""
+    from alembic import command
+    from alembic.config import Config
+    racine = os.path.dirname(os.path.abspath(__file__))
+    cfg = Config(os.path.join(racine, "alembic.ini"))
+    cfg.set_main_option("script_location", os.path.join(racine, "migrations"))
+    with eng.begin() as c:
+        cfg.attributes["connection"] = c
+        command.upgrade(cfg, "head")
+
+
+def version_schema(eng: sa.Engine | None = None) -> str:
+    with (eng or moteur()).connect() as c:
+        try:
+            return c.execute(sa.text("select version_num from alembic_version")).scalar() or ""
+        except Exception:  # noqa: BLE001
+            return ""
 
 
 # ------------------------------------------------------------------ lecture
@@ -468,7 +502,30 @@ class Transaction:
         res = self.cx.execute(t.insert().values(**valeurs))
         id_ = valeurs.get("id") or (res.inserted_primary_key[0] if res.inserted_primary_key else None)
         self._auditer("Création", nom, id_, None, valeurs, resume)
+        self._comptabiliser("creation", nom, None, {**valeurs, "id": id_})
         return id_
+
+    def _comptabiliser(self, action: str, nom: str, avant: dict | None, apres: dict | None) -> None:
+        """Comptabilisation automatique (mémo V8, § 3) des écritures saisies par les écrans historiques : mouvements
+        du journal de caisse et factures fournisseurs des comptes tiers. Sans effet avant la date de démarrage."""
+        if nom not in ("movements", "supplier_invoices"):
+            return
+        if nom == "movements":
+            import caisses
+            caisses.noter(self, avant, apres)
+        import comptabilisation as CPT
+        if nom == "movements":
+            if action == "creation":
+                CPT.mouvement_tresorerie(self, apres)
+            elif action == "modification":
+                CPT.mouvement_modifie(self, avant, apres)
+            else:
+                CPT.mouvement_supprime(self, avant)
+        else:
+            if action != "creation" and avant:
+                CPT._annuler_source(self, "facture_fournisseur", avant["id"], maintenant().date().isoformat())
+            if action != "suppression":
+                CPT.facture_fournisseur_historique(self, apres)
 
     def maj(self, nom: str, id_, valeurs: dict, resume: str | None = None) -> None:
         t = TABLES[nom]
@@ -481,6 +538,7 @@ class Transaction:
         self.cx.execute(t.update().where(t.c.id == id_).values(**valeurs))
         self._auditer("Modification", nom, id_, {k: avant.get(k) for k in valeurs},
                       valeurs, resume)
+        self._comptabiliser("modification", nom, avant, {**avant, **valeurs})
 
     def supprimer(self, nom: str, id_, resume: str | None = None) -> None:
         t = TABLES[nom]
@@ -489,12 +547,17 @@ class Transaction:
             raise ValueError("Historique V7 conservé : utilisez annulation ou contre-passation.")
         self.cx.execute(t.delete().where(t.c.id == id_))
         self._auditer("Suppression", nom, id_, avant, None, resume)
+        if avant:
+            self._comptabiliser("suppression", nom, avant, None)
 
     def supprimer_ou(self, nom: str, condition, resume: str | None = None) -> None:
         t = TABLES[nom]
-        for r in self.cx.execute(sa.select(t).where(condition)).fetchall():
-            self._auditer("Suppression", nom, r._mapping.get("id"), _ligne(r), None, resume)
+        lignes = [_ligne(r) for r in self.cx.execute(sa.select(t).where(condition)).fetchall()]
+        for r in lignes:
+            self._auditer("Suppression", nom, r.get("id"), r, None, resume)
         self.cx.execute(t.delete().where(condition))
+        for r in lignes:
+            self._comptabiliser("suppression", nom, r, None)
 
     def parametre(self, cle: str, valeur, resume: str | None = None) -> None:
         avant = self.cx.execute(sa.select(settings.c.valeur).where(settings.c.cle == cle)).scalar()
@@ -511,7 +574,11 @@ class Transaction:
 @contextmanager
 def transaction(resume: str):
     with moteur().begin() as cx:
-        yield Transaction(cx, resume)
+        t = Transaction(cx, resume)
+        yield t
+        if t.__dict__.get("_caisses"):        # contrôle des soldes de caisse sur le résultat de la transaction
+            import caisses
+            caisses.verifier(t)
 
 
 def journaliser(action: str, resume: str, objet: str = "", objet_id: str = "") -> None:

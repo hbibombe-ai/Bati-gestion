@@ -100,7 +100,7 @@ def xlsform(s: dict) -> tuple[bytes, dict]:
                 for c, p in zip(codes, agents)]
     version = dt.datetime.now().strftime("%Y%m%d%H%M")
     settings = [["form_title", "form_id", "version"],
-                [f"Présence journalière des agents – {R.company().get('name', 'MY DESTINY SARL')}", FORM_ID, version]]
+                [f"Présence journalière des agents – {(R.company().get('name') or 'Bâti Gestion')}", FORM_ID, version]]
 
     wb = openpyxl.Workbook()
     for i, (nom, lignes) in enumerate([("survey", survey), ("choices", choices), ("settings", settings)]):

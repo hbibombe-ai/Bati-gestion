@@ -6,3 +6,4 @@ openpyxl
 reportlab
 requests
 pypdf
+alembic>=1.13

@@ -98,8 +98,9 @@ ui.appliquer_style()
 # ------------------------------------------------------------------ navigation
 try:
     from vues import (accueil, audit, caisse, chantiers, compte, comptes_tiers, depenses,  # noqa: E402
-                      demandes_achat, devis_factures, dossiers, justificatifs, paie, personnel, presence_kobo,
-                      rapports, recherche, reprise_historique, sauvegarde, societe, tiers, utilisateurs)
+                      achats_stock, comptabilite_generale, devis_factures, dossiers, justificatifs, paie, personnel,
+                      presence_kobo, rapports, recherche, reprise_historique, sauvegarde, societe, taux, tiers,
+                      utilisateurs)
     from vues import memo_v7
     from vues import imports as centre_imports
 except ModuleNotFoundError as e:
@@ -141,10 +142,10 @@ PAGES = [
     ("Projets & Chantiers", "Chantiers", "chantiers", "construction", ["chantiers"], chantiers.page),
     ("Projets & Chantiers", "DQE, situations, qualité", "dossiers-chantier", "fact_check", ["projets"],
      espace("projets")),
-    ("Achats & Stocks", "Demandes d’achat", "demandes-achat", "request_page",
-     ["demandes_achat", "approbation_chantier", "chiffrage_achats", "approbation_coordonnateur"], demandes_achat.page),
-    ("Achats & Stocks", "Achats", "achats", "shopping_cart", ["achats"], espace("achats")),
-    ("Achats & Stocks", "Stocks", "stocks", "inventory_2", ["achats"], espace("stocks")),
+    ("Achats & Stocks", "Achats et stock", "achats-stock", "inventory",
+     ["demandes_achat", "chiffrage_achats", "factures_achat", "magasin", "achats"], achats_stock.page),
+    ("Achats & Stocks", "Dossiers d’achat (lecture)", "achats", "shopping_cart", ["achats"], espace("achats")),
+    ("Achats & Stocks", "Dossiers de stock", "stocks", "inventory_2", ["achats"], espace("stocks")),
     ("Achats & Stocks", "Matériel et charroi", "charroi", "local_shipping", ["charroi"], espace("charroi")),
     ("RH & Paie", "Personnel et pointage", "personnel", "badge", ["personnel", "pointage"], personnel.page),
     ("RH & Paie", "Présence KoboCollect", "presence-kobo", "phone_android", ["pointage"], presence_kobo.page),
@@ -155,8 +156,11 @@ PAGES = [
     ("Finance", "Justificatifs", "justificatifs", "attach_file", ["justificatifs"], justificatifs.page),
     ("Finance", "Journal de caisse", "caisse", "point_of_sale", ["tresorerie"], tresor("cash")),
     ("Finance", "Trésorerie", "tresorerie", "account_balance", ["tresorerie"], tresor("treasury")),
+    ("Finance", "Taux de change", "taux", "currency_exchange", ["tresorerie", "comptabilite"], taux.page),
     ("Tiers", "Clients et fournisseurs", "tiers", "contacts", ["tiers"], tiers.page),
     ("Tiers", "Comptes tiers", "comptes-tiers", "account_balance_wallet", ["comptes"], comptes_tiers.page),
+    ("Comptabilité & Documents", "Comptabilité générale", "comptabilite-generale", "account_balance_wallet",
+     ["comptabilite"], comptabilite_generale.page),
     ("Comptabilité & Documents", "Comptabilité et fiscalité", "comptabilite", "calculate", ["comptabilite"],
      espace("comptabilite")),
     ("Comptabilité & Documents", "Registres, garanties, tâches", "documents", "folder_open", ["documents"],
@@ -164,7 +168,7 @@ PAGES = [
     ("Comptabilité & Documents", "Centre de reprise et d’import", "imports", "upload_file", ["imports"],
      centre_imports.page),
     ("Comptabilité & Documents", "Reprise historique (lots chantier)", "reprise", "history", ["reprise"], reprise.page),
-    ("Administration", "Société MY DESTINY", "societe", "apartment", ["societe"], societe.page),
+    ("Administration", "Société", "societe", "apartment", ["societe"], societe.page),
     ("Administration", "Utilisateurs", "utilisateurs", "group", ["utilisateurs"], utilisateurs.page),
     ("Administration", "Paramètres et sauvegarde", "sauvegarde", "settings", ["sauvegarde"], sauvegarde.page),
     ("Administration", "Journal d’audit", "audit", "manage_search", ["audit"], audit.page),

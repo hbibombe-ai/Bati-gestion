@@ -6,6 +6,7 @@ import datetime as dt
 import streamlit as st
 
 import auth
+import caisses as CA
 import db
 import gestion_v7 as V
 import pdf
@@ -102,6 +103,9 @@ def imputation(mid: str) -> None:
         centre = ui.choix("Centre de coût (obligatoire hors chantier)", centres, f"jv_c_{mid}", v.get("centre", ""),
                           vide="Non renseigné")
     imput = st.text_input("Imputation : activité / poste / nature *", value=v.get("imputation", ""))
+    compte_cpt = st.text_input("Compte comptable de contrepartie (SYSCOHADA)", value=v.get("compte", ""),
+                               help="Facultatif : sans compte, la contrepartie reste au compte d’attente jusqu’à imputation. "
+                                    "Changer ce compte contre-passe l’écriture et la refait sur le bon compte.")
     fac = next((i["number"] for i in s["invoices"] if i["id"] == m["invoice_id"]), "")
     a, b = st.columns(2)
     ref = a.text_input("Référence facture", value=v.get("invoiceRef") or fac)
@@ -114,7 +118,10 @@ def imputation(mid: str) -> None:
     st.caption("Une sortie reste à justifier jusqu’au contrôle des pièces par la finance ou la direction.")
     if st.button("Enregistrer l’imputation", type="primary"):
         try:
+            if compte_cpt.strip() and not compte_cpt.strip().isdigit():
+                raise ValueError("Le compte comptable est un numéro (chiffres seulement).")
             rec = {**v, "piece": piece.strip(), "centre": centre or "", "imputation": imput.strip(), "invoiceRef": ref.strip(),
+                   "compte": compte_cpt.strip(),
                    "remarks": remarques.strip(), "reportingCurrency": rep, "rate": float(taux) if taux else None}
             if not rec["piece"] or not rec["imputation"]:
                 raise ValueError("Le numéro de pièce et l’imputation sont obligatoires.")
@@ -129,7 +136,162 @@ def imputation(mid: str) -> None:
         except ValueError as e:
             st.error(str(e))
         else:
-            ui.succes("Imputation enregistrée sans changer les soldes.")
+            ui.succes("Imputation enregistrée sans changer les soldes (écriture comptable mise à jour si la comptabilité "
+                      "est démarrée).")
+
+
+# ------------------------------------------------------------------ soldes, arrêtés et paramètres de caisse
+def bandeau(au: str, compte: str = "all") -> None:
+    """Solde de chaque caisse, dans sa propre devise (sans conversion), à la date choisie, avec son dernier mouvement."""
+    liste = [c for c in CA.caisses(au) if compte == "all" or c["nature"] == compte]
+    liste = [c for c in liste if c["nb"] or c["cle"].startswith("v7:")]
+    if not liste:
+        st.info("Aucun solde à afficher : saisissez le solde de départ de chaque caisse.")
+        return
+    st.markdown(f"**Solde de caisse au {au}**")
+    for i in range(0, len(liste), 3):
+        cols = st.columns(3)
+        for col, c in zip(cols, liste[i:i + 3]):
+            arr = CA.dernier_arrete(c["cle"])
+            note = (f"Dernier mouvement : {c['dernier_date']} · {c['dernier_libelle'][:40]} · "
+                    f"{'+' if c['dernier_montant'] >= 0 else ''}{R.money(c['dernier_montant'], c['devise'])}"
+                    if c["nb"] else "Aucun mouvement")
+            note += f" · arrêtée le {arr['date']}" if arr else " · jamais arrêtée"
+            valeur = ui._esc(R.money(c["solde"], c["devise"]))
+            if c["negatif"]:
+                valeur = f'<span style="color:#b42318">{valeur}</span>'
+            with col:
+                ui.carte(f"{c['libelle']} · {c['devise']}", valeur, note, accent=c["nature"] == "cash")
+    negatives = [c for c in liste if c["negatif"]]
+    if negatives:
+        st.error("Solde négatif : " + ", ".join(f"{c['libelle']} ({R.money(c['solde'], c['devise'])})"
+                                                 for c in negatives)
+                 + ". Une caisse ne peut pas sortir plus qu’elle ne contient : vérifiez le solde de départ et les "
+                   "entrées non saisies.")
+
+
+def _pv_pdf(a: dict) -> bytes:
+    noms = {u["id"]: u["nom"] for u in db.tout("users")}
+    lignes = [[R.plain(int(round(float(c) * 100))).rstrip("0").rstrip("."), str(n),
+               R.money(int(round(float(c) * 100)) * int(n), a["devise"])]
+              for c, n in sorted(a["billetage"].items(), key=lambda x: -float(x[0]))]
+    if a["autres"]:
+        lignes.append(["Pièces et autres", "", R.money(a["autres"], a["devise"])])
+    return pdf.document(
+        f"Procès-verbal d’arrêté de caisse du {a['date']}", R.company_snapshot(),
+        [("kv", [("Caisse", a["libelle_caisse"]), ("Devise", a["devise"]), ("Date de l’arrêté", a["date"]),
+                 ("Statut", a["statut"])]),
+         ("h2", "Billetage"), ("table", ["Coupure", "Nombre", "Montant"], lignes, {1, 2}),
+         ("kv", [("Montant compté", R.money(a["montant_compte"], a["devise"])),
+                 ("Solde théorique (journal)", R.money(a["solde_theorique"], a["devise"])),
+                 ("Écart", R.money(a["ecart"], a["devise"])), ("Explication", a["explication"] or "—")]),
+         ("kv", [("Compté par", noms.get(a["saisi_par"], "")), ("Le", str(a["saisi_le"])[:16]),
+                 ("Décision par", noms.get(a["decide_par"], "") or "—"), ("Le", str(a["decide_le"] or "")[:16] or "—"),
+                 ("Motif", a["motif_decision"] or "—")]),
+         ("espace", 12), ("p", "Signature du caissier : ______________________        "
+                               "Signature du contrôleur : ______________________")],
+        auteur=(auth.utilisateur() or {}).get("nom", ""))
+
+
+def arretes() -> None:
+    """Arrêté de caisse : le caissier compte les billets, l'application calcule l'écart, une autre personne valide."""
+    valideur = auth.modifie("comptabilite") or auth.modifie("approbation_dg")
+    liste = CA.caisses()
+    if auth.modifie("tresorerie") and liste:
+        noms = {c["cle"]: f"{c['libelle']} · {c['devise']}" for c in liste}
+        a, b = st.columns(2)
+        with a:
+            k = ui.choix("Caisse à arrêter", noms, "ac_caisse", next(iter(noms)))
+        with b:
+            date_ = ui.date_txt("Date de l’arrêté", "ac_date", R.today(), max_aujourdhui=True)
+        c = next(x for x in liste if x["cle"] == k)
+        theorique = CA.solde(k, date_)
+        st.caption(f"Solde théorique du journal au {date_} : {R.money(theorique, c['devise'])}. Saisissez les billets "
+                   "comptés ; l’écart est calculé automatiquement.")
+        coupures = CA.coupures(c["devise"])
+        billets = {}
+        for i in range(0, len(coupures), 5):
+            cols = st.columns(5)
+            for col, cp in zip(cols, coupures[i:i + 5]):
+                billets[str(cp)] = col.number_input(f"{cp:,} {c['devise']}".replace(",", " "), min_value=0, step=1,
+                                                    value=0, key=f"ac_b_{k}_{cp}")
+        x, y = st.columns(2)
+        with x:
+            autres = ui.montant(f"Pièces et autres ({c['devise']})", f"ac_aut_{k}", 0)
+        try:
+            compte = CA.montant_billetage(billets, R.cents(autres or 0, "Complément"))
+        except ValueError as e:
+            st.error(str(e))
+            return
+        ecart = compte - theorique
+        y.markdown(f"Compté : **{R.money(compte, c['devise'])}**  \nÉcart : **{R.money(ecart, c['devise'])}**"
+                   + (" (manquant)" if ecart < 0 else " (excédent)" if ecart > 0 else " — caisse juste"))
+        expl = st.text_input("Explication de l’écart" + (" *" if ecart else ""), key=f"ac_exp_{k}")
+        if st.button("Soumettre le procès-verbal de comptage", type="primary", key="ac_ok"):
+            try:
+                CA.proposer_arrete(k, date_, billets, R.cents(autres or 0, "Complément"), expl)
+            except ValueError as e:
+                st.error(str(e))
+            else:
+                ui.succes("Procès-verbal soumis : il doit être validé par une autre personne (comptabilité ou DG).")
+    tous = CA.arretes()
+    if not tous:
+        st.caption("Aucun arrêté de caisse enregistré.")
+        return
+    noms_u = {u["id"]: u["nom"] for u in db.tout("users")}
+    lignes = [{"_id": a["id"], "date": a["date"], "caisse": a["libelle_caisse"], "dev": a["devise"],
+               "theo": R.money(a["solde_theorique"], a["devise"]), "cpt": R.money(a["montant_compte"], a["devise"]),
+               "ecart": R.money(a["ecart"], a["devise"]), "statut": a["statut"], "par": noms_u.get(a["saisi_par"], "")}
+              for a in tous]
+    i = ui.tableau(lignes, {"date": "Date", "caisse": "Caisse", "dev": "Devise", "theo": "Solde théorique",
+                            "cpt": "Compté", "ecart": "Écart", "statut": "Statut", "par": "Compté par"},
+                   key="tab_arretes", selection=True)
+    if i is None:
+        return
+    a = next(x for x in tous if x["id"] == lignes[i]["_id"])
+    ui.telecharger("Procès-verbal (PDF)", _pv_pdf(a), f"arrete-caisse-{a['date']}-{a['devise']}.pdf", ui.MIME_PDF,
+                   key=f"pv_{a['id']}")
+    if a["statut"] == "Proposé" and valideur:
+        motif = st.text_input("Motif de la décision (obligatoire en cas de rejet)", key=f"ac_motif_{a['id']}")
+        b1, b2 = ui.rangee(2)
+        for bouton, valider in ((b1, True), (b2, False)):
+            if bouton.button("Valider l’arrêté" if valider else "Rejeter", type="primary" if valider else "secondary",
+                             key=f"ac_dec_{valider}_{a['id']}"):
+                try:
+                    CA.decider_arrete(a["id"], valider, motif)
+                except ValueError as e:
+                    st.error(str(e))
+                else:
+                    ui.succes("Arrêté validé" + (" : l’écart est régularisé et comptabilisé." if a["ecart"] else ".")
+                              if valider else "Arrêté rejeté : le caissier doit recompter.")
+
+
+def parametres_caisse() -> None:
+    p = CA.parametres()
+    st.caption("Décision de la DG, motivée et tracée. S’applique à toutes les saisies (écran, import, circuit V7).")
+    with st.form("param_caisse"):
+        st.markdown("**Interdire un solde négatif**")
+        cols = st.columns(3)
+        bloque = {n: cols[i].checkbox(lbl, value=bool((p["interdire_negatif"] or {}).get(n)), key=f"pc_neg_{n}")
+                  for i, (n, lbl) in enumerate(R.CASH_ACCOUNTS.items())}
+        st.markdown("**Coupures du billetage** (séparées par des virgules)")
+        cols = st.columns(len(R.CURRENCIES))
+        coup = {d: cols[i].text_input(d, ", ".join(str(x) for x in (p["coupures"] or {}).get(d, [])), key=f"pc_c_{d}")
+                for i, d in enumerate(R.CURRENCIES)}
+        a, b = st.columns(2)
+        manquant = a.text_input("Compte des manquants de caisse", p["compte_manquant"])
+        excedent = b.text_input("Compte des excédents de caisse", p["compte_excedent"])
+        motif = st.text_input("Motif *")
+        ok = st.form_submit_button("Enregistrer")
+    if ok:
+        try:
+            coupures = {d: [int(x) for x in v.replace(" ", "").split(",") if x] for d, v in coup.items() if v.strip()}
+            CA.configurer({"interdire_negatif": bloque, "coupures": coupures, "compte_manquant": manquant.strip(),
+                           "compte_excedent": excedent.strip()}, motif)
+        except ValueError as e:
+            st.error(str(e) if "invalid literal" not in str(e) else "Coupures : nombres entiers seulement.")
+        else:
+            ui.succes("Paramètres de caisse enregistrés.")
 
 
 def page(mode: str) -> None:
@@ -150,6 +312,15 @@ def page(mode: str) -> None:
         compte = ui.choix("Compte", {"all": "Tous les comptes", **R.CASH_ACCOUNTS}, f"cs_cpt_{mode}",
                           "cash" if mode == "cash" else "all")
     f = {"from": du, "to": au, "currency": monnaie, "account": compte}
+    bandeau(au, compte)
+    if mode == "cash":
+        n_attente = sum(1 for a in CA.arretes() if a["statut"] == "Proposé")
+        with st.expander("Arrêté de caisse" + (f" · {n_attente} en attente de validation" if n_attente else ""),
+                         icon=":material/fact_check:", expanded=bool(n_attente) and auth.modifie("comptabilite")):
+            arretes()
+        if auth.modifie("approbation_dg"):
+            with st.expander("Paramètres de caisse (DG)", icon=":material/tune:"):
+                parametres_caisse()
     try:
         rep = R.cash_summary(s["movements"], f, s["company"]["defaultCurrency"])
     except ValueError as e:

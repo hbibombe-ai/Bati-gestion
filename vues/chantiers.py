@@ -121,11 +121,11 @@ def page() -> None:
     if managed:
         st.info("Budget DQE et engagements disponibles dans Circuit financier V7. Le budget historique ci-dessous reste une référence antérieure.")
     b.markdown(f"**Budget historique :** {R.money(p['budget'], p['currency'])}  \n**Décaissements :** "
-               f"{ui.montants_texte(decaissements(s, p['id']), True)}")
+               f"{ui.montants_texte(decaissements(s, p['id']), True, consolide_aussi=True)}")
     if auth.voit("commercial"):
         fac = [x for x in s["invoices"] if x["project"] == p["id"]]
-        c.markdown("**Facturé :** " + ui.montants_texte(R.totals_by_currency(fac, R.total), True) + "  \n**Reste à "
-                   "encaisser :** " + ui.montants_texte(R.totals_by_currency(fac, lambda x: R.total(x) - x["paid"]), True))
+        c.markdown("**Facturé :** " + ui.montants_texte(R.totals_by_currency(fac, R.total), True, consolide_aussi=True) + "  \n**Reste à "
+                   "encaisser :** " + ui.montants_texte(R.totals_by_currency(fac, lambda x: R.total(x) - x["paid"]), True, consolide_aussi=True))
     if auth.voit("depenses"):
         dep = sorted([e for e in s["expenses"] if e["project"] == p["id"]], key=lambda e: e["date"], reverse=True)
         st.markdown("**Dépenses du chantier**")

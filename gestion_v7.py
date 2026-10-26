@@ -16,7 +16,7 @@ import regles as R
 
 LEVELS = ('N1', 'N2', 'N3', 'DG')
 KINDS = ('budget', 'operation', 'account', 'entry', 'reconciliation', 'fiscal', 'rate', 'delegation', 'invoice', 'payment', 'carryover',
-         'purchase_request')  # purchase_request : demande d'achat matériel et matériaux (achats_circuit.py)
+         'purchase_request')  # demandes du circuit transitoire du 16/10, lues pour leur reprise (achats.reprendre_transitoires)
 CHART = {'101':'Capital social','16':'Emprunts','23':'Bâtiments','24':'Matériel et mobilier',
  '28':'Amortissements','32':'Matières premières','4011':'Fournisseurs','4013':'Sous-traitants',
  '4017':'Retenues de garantie fournisseurs','4091':'Avances fournisseurs','411':'Clients',
@@ -29,6 +29,11 @@ CHART = {'101':'Capital social','16':'Emprunts','23':'Bâtiments','24':'Matérie
  '67':'Frais financiers','68':'Amortissements','69':'Provisions','705':'Travaux facturés',
  '706':'Services vendus','89':'Impôts sur le résultat'}
 DEFAULT_POLICY = {'thresholds':[70,85,95,100], 'levels':list(LEVELS), 'max_advance_days':30}
+
+def _cpt():
+    """Comptabilisation SYSCOHADA (mémo V8) : active à partir de la date de démarrage fixée par la DG."""
+    import comptabilisation
+    return comptabilisation
 
 def _exiger(u, module, message):
     if not peut(u, module):raise ValueError(message)
@@ -78,9 +83,17 @@ def save(tx,row,data):
     tx._auditer('Modification','v7_records',row['id'],row,{**row,'data':data,'version':row['version']+1})
 
 def insert(tx,kind,ref,project,currency,data):
+    """Unicité (type, référence) garantie par la contrainte v7_reference_unique de la base (lot 0 V8) :
+    plus de relecture de tous les enregistrements. Les références sont rangées en majuscules, donc la
+    comparaison reste insensible à la casse. Le point de sauvegarde garde la transaction utilisable après refus."""
     if kind not in KINDS or not ref.strip() or len(ref)>200 or currency not in R.CURRENCIES:raise ValueError('Référence ou devise invalide.')
-    if any(r['kind']==kind and r['ref'].casefold()==ref.strip().casefold() for r in records(tx=tx)):raise ValueError('Référence déjà utilisée.')
-    id_=db.nouvel_id();tx.inserer('v7_records',dict(id=id_,kind=kind,ref=ref.strip().upper(),project=project,currency=currency,data=data,version=1));return id_
+    id_=db.nouvel_id()
+    try:
+        with tx.cx.begin_nested():
+            tx.inserer('v7_records',dict(id=id_,kind=kind,ref=ref.strip().upper(),project=project,currency=currency,data=data,version=1))
+    except sa.exc.IntegrityError:
+        raise ValueError('Référence déjà utilisée.') from None
+    return id_
 
 def event(data,u,action,note=''):
     data.setdefault('history',[]).append(dict(user=u['id'],name=u['nom'],action=action,note=note,at=db.maintenant().isoformat()))
@@ -178,12 +191,15 @@ def metrics(budget,ops,carry=None,tx=None):
     carry=records('carryover',tx) if carry is None else carry
     carry=[c for c in carry if c['project']==budget['project'] and c['currency']==budget['currency'] and c['data']['status'] in ('Approuvée','Soldée')]
     out=[];thresholds=policy(tx)['thresholds']
+    import achats  # circuit d'achat V8 : engagements, coûts réalisés et décaissements par poste DQE
+    ach=achats.effets_budget(budget['project'],budget['currency'],tx)
     for line in d['lines']:
         selected=[r['data'] for r in active if r['data']['post']==line['code']]
         effects=[carry_effects(c) for c in carry if c['data'].get('post')==line['code']]
-        realized=sum(x.get('cost',0) for x in selected)+sum(e['cost'] for e in effects)
-        opened=sum(max(0,x['amount']-x.get('cost',0)) for x in selected if x['status'] in ('Approuvée','Commandée','Réceptionnée','Facturée','Partiellement payée','Payée'))+sum(e['open'] for e in effects)
-        cash=sum(sum(p['amount'] for p in x.get('payments',[]) if not p.get('reversed'))-sum(p['amount'] for p in x.get('returns',[])) for x in selected)+sum(e['cash'] for e in effects)
+        a8=ach.get(line['code'],{})
+        realized=sum(x.get('cost',0) for x in selected)+sum(e['cost'] for e in effects)+a8.get('cost',0)
+        opened=sum(max(0,x['amount']-x.get('cost',0)) for x in selected if x['status'] in ('Approuvée','Commandée','Réceptionnée','Facturée','Partiellement payée','Payée'))+sum(e['open'] for e in effects)+a8.get('open',0)
+        cash=sum(sum(p['amount'] for p in x.get('payments',[]) if not p.get('reversed'))-sum(p['amount'] for p in x.get('returns',[])) for x in selected)+sum(e['cash'] for e in effects)+a8.get('cash',0)
         advance=sum(max(0,sum(p['amount'] for p in x.get('payments',[]) if not p.get('reversed'))-sum(j['amount'] for j in x.get('justifications',[]) if j['status']=='Validée')-sum(p['amount'] for p in x.get('returns',[]))) for x in selected if x['nature']=='Avance')+sum(e['advance'] for e in effects)
         committed=opened+realized;rate=100*committed/line['budget'] if line['budget'] else (100 if committed else 0)
         alert=next((label for threshold,label in reversed(list(zip(thresholds,['Information','Vigilance','Critique','Blocage']))) if rate>=threshold),'Normal')
@@ -303,6 +319,7 @@ def invoice(id_,ref,date_,value):
         insert(t,'invoice',d['party']+':'+ref,r['project'],r['currency'],dict(operation=r['id'],ref=ref,date=date_,amount=value))
         d.setdefault('invoices',[]).append(dict(ref=ref,date=date_,amount=value));d['cost']+=value;d['status']='Facturée'
         _entry(t,'invoice:'+r['id']+':'+ref,r['project'],r['currency'],date_,d['label'],d['expense_account'],'4011',value)
+        _cpt().v7_facture(t,r,d,ref,date_,value)
         event(d,u,'Facture comptabilisée',ref);save(t,r,d)
 
 def table_rows(tx,name):
@@ -334,6 +351,7 @@ def _opening_tx(t,account,value,date_,ref,strict=False):
     if moved and (strict or records('operation',t)):raise ValueError('Utilisez un ajustement documenté pour un compte déjà mouvementé.')
     _touch_account(t,a);_move(t,a,'opening:'+ref,'',date_,value,'in','Solde initial '+ref)
     _entry(t,'opening:'+account,'',a['currency'],date_,'Solde initial',a['data']['ledger'],'12',value)
+    _cpt().v7_ouverture(t,a,value,date_,ref)
 
 def pay(id_,account,value,date_,reference):
     u=actor(['admin','finance']);amount(value,True);date(date_)
@@ -350,6 +368,7 @@ def pay(id_,account,value,date_,reference):
         insert(t,'payment',reference,r['project'],r['currency'],dict(operation=r['id'],account=account,amount=value,date=date_))
         _touch_account(t,a);pid=db.nouvel_id();d['payments'].append(dict(id=pid,ref=reference,amount=value,date=date_,account=account,user=u['id']))
         _move(t,a,pid,r['project'],date_,value,'out',r['ref']+' '+reference)
+        _cpt().v7_paiement(t,r,d,a,pid,value,date_,reference)
         _entry(t,'pay:'+pid,r['project'],r['currency'],date_,d['label'],'581' if d['nature']=='Avance' else '4011',a['data']['ledger'],value)
         d['status']='Payée' if paid+value==d['amount'] else 'Partiellement payée';event(d,u,'Paiement',reference);save(t,r,d)
 
@@ -361,6 +380,7 @@ def reverse_payment(id_,pid,date_,reason):
         if d['nature']=='Avance' and (d.get('returns') or any(j['status']=='Validée' for j in d['justifications'])):raise ValueError('Avance déjà régularisée : contre-passation spécifique nécessaire.')
         a=get(t,p['account'],'account');_touch_account(t,a);p['reversed']=True
         _move(t,a,'reverse:'+pid,r['project'],date_,p['amount'],'in','Contre-passation '+reason)
+        _cpt().v7_contre_passation(t,pid,date_)
         _entry(t,'reverse:'+pid,r['project'],r['currency'],date_,reason,a['data']['ledger'],'581' if d['nature']=='Avance' else '4011',p['amount'])
         d['status']='Partiellement payée' if any(not x.get('reversed') for x in d['payments']) else ('Approuvée' if d['nature']=='Avance' else 'Facturée');event(d,u,'Contre-passation',reason);save(t,r,d)
 
@@ -385,6 +405,7 @@ def validate_justification(id_,piece,accept,reason):
             used=sum(x['amount'] for x in d['justifications'] if x['status']=='Validée')+sum(x['amount'] for x in d['returns'])
             if used+j['amount']>paid:raise ValueError('Justificatifs supérieurs aux fonds à régulariser.')
             d['cost']+=j['amount'];_entry(t,'justify:'+piece,r['project'],r['currency'],p['document_date'],d['label'],d['expense_account'],'581',j['amount'])
+            _cpt().v7_justification(t,r,d,piece,j['amount'],p['document_date'])
         j['status']='Validée' if accept else 'Rejetée';j['validator']=u['id'];j['reason']=reason
         t.maj('pieces',piece,dict(status=j['status'],validated_by=u['id'],validated_at=db.maintenant(),reason=reason));event(d,u,'Contrôle justificatif',reason);save(t,r,d)
 
@@ -397,6 +418,7 @@ def return_advance(id_,account,value,date_,reference):
         if value>available or not reference.strip():raise ValueError('Restitution supérieure au solde ou référence absente.')
         _touch_account(t,a);rid=db.nouvel_id();d['returns'].append(dict(id=rid,amount=value,date=date_,ref=reference))
         _move(t,a,rid,r['project'],date_,value,'in','Restitution '+reference);_entry(t,'return:'+rid,r['project'],r['currency'],date_,d['label'],a['data']['ledger'],'581',value);event(d,u,'Restitution',reference);save(t,r,d)
+        _cpt().v7_restitution(t,r,a,rid,value,date_)
 
 def transfer(source,target,value,date_,reference):
     actor(['admin','finance']);amount(value,True);date(date_)
@@ -409,6 +431,7 @@ def transfer(source,target,value,date_,reference):
         _touch_account(t,a);_touch_account(t,b)
         _entry(t,'transfer:'+reference,'',a['currency'],date_,'Transfert '+reference,b['data']['ledger'],a['data']['ledger'],value)
         _move(t,a,'transfer:'+reference,'',date_,value,'out','Transfert '+reference);_move(t,b,'transfer:'+reference,'',date_,value,'in','Transfert '+reference)
+        _cpt().v7_virement(t,a,b,value,date_,reference)
 
 def cancel(id_,reason):
     u=actor(['admin','finance','chantier'])

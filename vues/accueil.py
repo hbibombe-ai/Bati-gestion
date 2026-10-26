@@ -11,10 +11,42 @@ import ui
 from vues import chantiers as vch
 
 
+def carte_tresorerie() -> None:
+    """Soldes de toutes les caisses, banques et Mobile money, chacun dans sa devise ; alerte si une caisse est négative
+    ou si la trésorerie de l'application ne concorde pas avec la comptabilité."""
+    import caisses as CA
+    liste = [c for c in CA.caisses() if c["nb"] or c["cle"].startswith("v7:")]
+    if not liste:
+        return
+    rouge = ' style="color:#b42318"'
+    lignes = "<br>".join(
+        f'{ui._esc(c["libelle"])} : <b{rouge if c["negatif"] else ""}>'
+        f'{ui._esc(R.money(c["solde"], c["devise"]))}</b>' for c in liste)
+    alertes = []
+    if any(c["negatif"] for c in liste):
+        alertes.append("caisse négative")
+    if auth.voit("comptabilite"):
+        try:
+            import comptabilisation as CPT
+            if any(x["ecart"] for x in CPT.controle_tresorerie()):
+                alertes.append("écart avec la comptabilité")
+        except Exception:  # noqa: BLE001 — l'accueil ne doit jamais tomber pour un contrôle
+            pass
+    attente = sum(1 for a in CA.arretes() if a["statut"] == "Proposé")
+    if attente:
+        alertes.append(f"{attente} arrêté(s) de caisse à valider")
+    ui.carte("Trésorerie disponible", f'<div class="bg-montants" style="font-size:1rem;font-weight:500;'
+                                      f'letter-spacing:0">{lignes}</div>',
+             ("À vérifier : " + ", ".join(alertes)) if alertes else "Soldes du jour, chacun dans sa devise",
+             accent=bool(alertes))
+    if alertes and "caisse" in nav.PAGES:
+        nav.lien("caisse", "Ouvrir le journal de caisse", ":material/point_of_sale:")
+
+
 def page() -> None:
     auth.exiger("accueil")
     s = R.charger()
-    ui.en_tete("Vue d’ensemble", f"{s['company'].get('name', 'MY DESTINY')} — l’essentiel de votre activité.")
+    ui.en_tete("Vue d’ensemble", f"{(s['company'].get('name') or 'Bâti Gestion')} — l’essentiel de votre activité.")
 
     cols = st.columns(3)
     en_cours = [p for p in s["projects"] if p["status"] == "En cours"]
@@ -27,8 +59,17 @@ def page() -> None:
     if auth.voit("commercial"):
         with cols[2]:
             ui.carte("À encaisser", ui.montants_html(R.totals_by_currency(s["invoices"], lambda i: R.total(i) - i["paid"])),
-                     "Solde par monnaie, sans conversion")
+                     "Solde par monnaie ; total converti indicatif")
 
+    if auth.voit("tresorerie"):
+        carte_tresorerie()
+
+    if auth.modifie("tresorerie") or auth.modifie("comptabilite"):
+        import devises as DV
+        manquants = [e["paire"] for e in DV.etat_du_jour() if not e["du_jour"]]
+        if manquants:
+            st.info(f"Taux du jour non saisi : {', '.join(manquants)}. Les totaux consolidés utilisent le dernier taux connu.")
+            nav.lien("taux", "Saisir les taux du jour", ":material/currency_exchange:")
     if auth.voit("depenses"):
         v7 = V.alerts()
         if v7:st.warning(f"{len(v7)} alerte(s) du circuit V7 à traiter.")

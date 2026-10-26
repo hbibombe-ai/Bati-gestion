@@ -151,7 +151,7 @@ def charger(*noms: str) -> dict:
 def company() -> dict:
     c = db.parametre("company")
     if not c:
-        c = {"name": "MY DESTINY SARL", "address": "", "phone": "", "registration": "", "defaultCurrency": "USD"}
+        c = {"name": "", "address": "", "phone": "", "registration": "", "defaultCurrency": "USD"}
     c.setdefault("defaultCurrency", "USD")
     return c
 
@@ -189,21 +189,8 @@ def project_name(s: dict, id_: str) -> str:
 
 
 # ------------------------------------------------------------------ société
-V7_COMPANY = {
-    "name": "MY DESTINY BUREAU SERVICE ET DES CONSEILS SARL",
-    "phone": "+243 853 774 745 ; +243 821 062 666 ; +243 892 030 653 ; +243 998 842 148",
-    "registration": "CD/KNG/RCCM/13-B-01142",
-    "v7": {
-        "usualName": "MDY SARL / MY DESTINY SARL", "legalForm": "SARL", "country": "République Démocratique du Congo",
-        "city": "Kinshasa", "year": "2013", "nationalId": "01-F4200-N77086G", "taxId": "A1402351X",
-        "vatId": "0637/DGI/DUI/CDI/VWUB/TVA/2016", "director": "Patrick Kanku Tshinkenke",
-        "beneficialOwner": "Mme Kasongo Mwimbi Nancy — 100 %", "headcount": "20",
-        "website": "www.mydestinycongo.com", "email": "mydestinycongo@gmail.com ; direction.mydestinycongo@gmail.com",
-        "address1": "Avenue Urbanisme n°4511, Quartier Bon Marché, Commune de Barumbu, Kinshasa (Réf. : Paroisse Saint Éloi)",
-        "address2": "Avenue Usoke n°160, Galerie Nathalie, Kinshasa, RDC",
-        "officialAddress": "", "operatingAddress": "", "footer": "",
-    },
-}
+# Les données d'identité de la société ne sont plus écrites dans le code (lot 0 V8) : elles sont dans la fiche
+# société en base (paramètre « company »), saisie ou importée depuis l'écran Société.
 V7_FIELDS = [("usualName", "Sigle / nom usuel"), ("legalForm", "Forme juridique"), ("country", "Pays"),
              ("city", "Lieu d’immatriculation"), ("year", "Année de création"),
              ("nationalId", "Identification nationale"), ("taxId", "NIF / numéro impôt"), ("vatId", "Numéro TVA"),

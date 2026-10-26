@@ -37,20 +37,21 @@ MODULES = ["accueil", "recherche", "rapports", "chantiers", "tiers", "comptes", 
            "charroi", "projets", "comptabilite", "documents", "societe", "reprise", "utilisateurs",
            "sauvegarde", "audit", "imports",
            "approbation_n1", "approbation_n2", "approbation_n3", "approbation_dg",
-           "demandes_achat", "approbation_chantier", "chiffrage_achats", "approbation_coordonnateur"]
+           "demandes_achat", "chiffrage_achats", "factures_achat", "magasin", "magasin_inventaire", "magasin_ecarts"]
 DROITS = {
     "admin": {m: "w" for m in MODULES},
     "finance": {"accueil": "r", "recherche": "r", "rapports": "r", "chantiers": "r", "tiers": "w",
                 "comptes": "w", "commercial": "w", "depenses": "w", "justificatifs": "w",
                 "validation_pieces": "w", "tresorerie": "w", "achats": "w", "charroi": "r", "projets": "r",
                 "comptabilite": "w", "documents": "w", "societe": "r", "reprise": "w", "imports": "w",
-                "approbation_n2": "w", "approbation_n3": "w", "demandes_achat": "r", "chiffrage_achats": "w"},
+                "approbation_n2": "w", "approbation_n3": "w", "demandes_achat": "r", "chiffrage_achats": "w",
+                "factures_achat": "w", "magasin_ecarts": "w"},
     "rh": {"accueil": "r", "recherche": "r", "chantiers": "r", "personnel": "w", "pointage": "w", "paie": "w",
            "documents": "r", "societe": "r", "imports": "w"},
     "chantier": {"accueil": "r", "recherche": "r", "chantiers": "w", "tiers": "r", "depenses": "w",
                  "justificatifs": "w", "personnel": "r", "pointage": "w", "achats": "w", "charroi": "w",
                  "projets": "w", "documents": "r", "societe": "r", "imports": "w", "approbation_n1": "w",
-                 "demandes_achat": "w", "approbation_chantier": "w"},
+                 "demandes_achat": "w", "magasin": "w", "magasin_inventaire": "w"},
     "lecteur": {"accueil": "r", "recherche": "r", "rapports": "r", "chantiers": "r", "tiers": "r", "comptes": "r",
                 "commercial": "r", "depenses": "r", "justificatifs": "r", "tresorerie": "r", "personnel": "r",
                 "achats": "r", "charroi": "r", "projets": "r", "comptabilite": "r", "documents": "r",
@@ -72,10 +73,12 @@ MODULE_LABELS = {
     "approbation_n2": "Approbation N2 (finance, rapprochement des lots)",
     "approbation_n3": "Approbation N3 (autorisation de paiement)",
     "approbation_dg": "Approbation DG (budgets, révisions, délégations, activation)",
-    "demandes_achat": "Demandes d’achat matériel et matériaux",
-    "approbation_chantier": "Validation du besoin (chef de chantier, directeur de projet)",
-    "chiffrage_achats": "Chiffrage des achats et commandes groupées",
-    "approbation_coordonnateur": "Validation coordonnateur de projet (demandes d’achat)",
+    "demandes_achat": "Demandes d’achat et besoins du chantier",
+    "chiffrage_achats": "Achats — bons de commande",
+    "factures_achat": "Factures d’achat (saisie, rapprochement, validation)",
+    "magasin": "Magasin — réceptions, sorties, mouvements",
+    "magasin_inventaire": "Magasin — comptages d’inventaire",
+    "magasin_ecarts": "Magasin — validation des écarts d’inventaire",
 }
 NIVEAUX = {"w": "Modification", "r": "Consultation", None: "Aucun"}
 
@@ -102,54 +105,56 @@ def _avec(base: dict, **acces) -> dict:
 PROFILS_STANDARDS: dict[str, dict] = {
     "chef_equipe": dict(
         libelle="Chef d’équipe", role="chantier",
-        description="Exprime les besoins de son équipe (demandes d’achat) et pointe le personnel.",
+        description="Exprime les besoins de son équipe (demandes d’achat, bons de sortie) et pointe le personnel.",
         droits=_avec(_LECTURE, chantiers="r", demandes_achat="w", pointage="w", achats="r")),
     "conducteur_travaux": dict(
         libelle="Conducteur de travaux", role="chantier",
-        description="Chantiers, dépenses et justificatifs, pointage, demandes d’achat, réceptions ; contrôle N1.",
-        droits=_avec(DROITS["chantier"], approbation_chantier=None)),
+        description="Chantiers, dépenses et justificatifs, pointage, besoins et demandes d’achat ; contrôle N1.",
+        droits=_avec(DROITS["chantier"], magasin=None, magasin_inventaire=None)),
     "magasinier_chantier": dict(
         libelle="Magasinier chantier", role="chantier",
-        description="Demandes d’achat du magasin de chantier, réceptions, stocks du chantier.",
-        droits=_avec(_LECTURE, chantiers="r", achats="w", demandes_achat="w", imports="w")),
+        description="Réceptions, sorties vers le chantier, comptages d’inventaire du magasin de chantier.",
+        droits=_avec(_LECTURE, chantiers="r", achats="r", demandes_achat="r", magasin="w", magasin_inventaire="w",
+                     imports="w")),
     "chef_chantier": dict(
         libelle="Chef de chantier", role="chantier",
-        description="Valide le besoin des demandes d’achat de ses chantiers ; contrôle N1.",
-        droits=dict(DROITS["chantier"])),
+        description="Besoins et demandes d’achat de ses chantiers ; contrôle N1.",
+        droits=_avec(DROITS["chantier"], magasin=None, magasin_inventaire=None)),
     "directeur_projet": dict(
         libelle="Directeur de projet", role="chantier",
-        description="Valide le besoin des demandes d’achat de ses projets ; suivi DQE et rapports.",
-        droits=_avec(DROITS["chantier"], rapports="r")),
+        description="Demandes d’achat de ses projets ; contrôle N1 ; suivi DQE et rapports.",
+        droits=_avec(DROITS["chantier"], magasin=None, magasin_inventaire=None, rapports="r")),
     "coordonnateur_projet": dict(
         libelle="Coordonnateur de projet", role="chantier",
-        description="Arbitre et valide les demandes d’achat chiffrées au-delà du seuil, sur son portefeuille.",
+        description="Supervise son portefeuille de chantiers ; contrôle N1 des demandes d’achat.",
         droits=_avec(_LECTURE, chantiers="r", rapports="r", achats="r", projets="r", demandes_achat="r",
-                     approbation_coordonnateur="w")),
+                     approbation_n1="w")),
     "acheteur": dict(
         libelle="Acheteur", role="finance",
-        description="Chiffre les demandes (prix, fournisseur), passe les commandes groupées.",
+        description="Référentiel articles et magasins, bons de commande regroupés par fournisseur.",
         droits=_avec(_LECTURE, chantiers="r", tiers="w", comptes="r", achats="w", demandes_achat="r",
                      chiffrage_achats="w", imports="w")),
     "responsable_achats": dict(
         libelle="Responsable achats", role="finance",
-        description="Comme l’acheteur, avec les rapports, les dépenses et le matériel en consultation.",
+        description="Comme l’acheteur, avec rapports, dépenses et matériel en consultation.",
         droits=_avec(_LECTURE, chantiers="r", tiers="w", comptes="r", achats="w", demandes_achat="r",
                      chiffrage_achats="w", imports="w", rapports="r", depenses="r", charroi="r")),
     "magasinier_central": dict(
         libelle="Magasinier central / logistique", role="chantier",
-        description="Dépôt central : réceptions, stocks, transferts vers les chantiers.",
-        droits=_avec(_LECTURE, chantiers="r", achats="w", demandes_achat="r", imports="w")),
+        description="Dépôt central : réceptions, sorties, comptages d’inventaire.",
+        droits=_avec(_LECTURE, chantiers="r", achats="r", demandes_achat="r", magasin="w", magasin_inventaire="w",
+                     imports="w")),
     "comptable": dict(
         libelle="Comptable fournisseurs", role="finance",
-        description="Factures, comptes tiers, comptabilité ; contrôle N2. Sans chiffrage ni autorisation N3.",
+        description="Factures d’achat (rapprochement à 3 voies), comptes tiers, comptabilité ; contrôle N2.",
         droits=_avec(DROITS["finance"], chiffrage_achats=None, approbation_n3=None)),
     "daf": dict(
         libelle="Directeur administratif et financier", role="finance",
-        description="Finance et comptabilité ; contrôles N2 et N3. Sans chiffrage des achats.",
+        description="Finance et comptabilité ; contrôles N2 et N3 ; validation des écarts d’inventaire.",
         droits=_avec(DROITS["finance"], chiffrage_achats=None)),
     "dg": dict(
         libelle="Directeur général", role="admin",
-        description="Tous les accès (administrateur) ; approbation DG.",
+        description="Tous les accès (administrateur) ; approbation DG, paramètres et dérogations.",
         droits={m: "w" for m in MODULES}),
     "admin_erp": dict(
         libelle="Administrateur ERP", role="lecteur",
@@ -158,10 +163,12 @@ PROFILS_STANDARDS: dict[str, dict] = {
 }
 
 # Séparation des tâches : un même profil ne cumule pas ces accès en modification.
+# (Les incompatibilités entre personnes — demandeur / validateur / réceptionnaire / acheteur / trésorier — sont, elles,
+# contrôlées document par document dans les services, avec dérogation nominative DG possible : derogations.py.)
 INCOMPATIBILITES = [
-    ("chiffrage_achats", "approbation_coordonnateur", "fixer les prix puis les approuver"),
-    ("chiffrage_achats", "approbation_dg", "fixer les prix puis donner l’approbation finale"),
+    ("chiffrage_achats", "approbation_dg", "émettre les commandes puis donner l’approbation finale"),
     ("utilisateurs", "chiffrage_achats", "s’attribuer des droits et passer les commandes"),
+    ("magasin_inventaire", "magasin_ecarts", "compter l’inventaire puis en valider les écarts"),
 ]
 
 
