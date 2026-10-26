@@ -66,6 +66,9 @@ class Etat:
         self.pieces = lire("pieces", ("content",))
         self.movements = lire("movements")
         self.expenses = lire("expenses")
+        self.familles = lire("stk_familles")
+        self.articles = lire("stk_articles")
+        self.magasins = lire("stk_magasins")
         # Chantiers affectés par usager (périmètre des profils) : lus ici pour ne pas ouvrir de seconde connexion.
         self.perimetres = {int(r["cle"].split(":")[1]): r["valeur"] for r in lire("settings")
                            if r["cle"].startswith("projets_utilisateur:") and isinstance(r["valeur"], list) and r["valeur"]}
