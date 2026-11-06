@@ -39,6 +39,70 @@ def lignes(s: dict, projets: list[dict]) -> list[dict]:
     return out
 
 
+KINSHASA = (-4.3317, 15.3139)
+COULEURS_ETAT = {"En cours": [255, 159, 28], "À démarrer": [61, 90, 254], "Suspendu": [240, 80, 122],
+                 "Terminé": [18, 184, 134]}
+
+
+def lire_gps(texte: str) -> tuple[float | None, float | None]:
+    """« -4.3317, 15.3139 » (copié depuis Google Maps) → (latitude, longitude) ; vide → (None, None)."""
+    t = (texte or "").strip()
+    if not t:
+        return None, None
+    morceaux = [m for m in t.replace(";", ",").replace(" ", ",").split(",") if m]
+    if len(morceaux) != 2:
+        raise ValueError("Coordonnées GPS : indiquez la latitude et la longitude, par exemple -4.3317, 15.3139.")
+    try:
+        lat, lon = float(morceaux[0]), float(morceaux[1])
+    except ValueError:
+        raise ValueError("Coordonnées GPS : utilisez des nombres avec un point décimal, par exemple -4.3317, 15.3139.")
+    if not (-14 <= lat <= 6 and 11 <= lon <= 32):
+        raise ValueError("Coordonnées GPS hors de la RDC : vérifiez l’ordre (latitude d’abord, puis longitude).")
+    return round(lat, 6), round(lon, 6)
+
+
+def texte_gps(p: dict) -> str:
+    return f"{p['latitude']}, {p['longitude']}" if p.get("latitude") is not None and p.get("longitude") is not None else ""
+
+
+def carte(s: dict, projets: list[dict], hauteur: int = 430) -> None:
+    """Carte des chantiers géolocalisés, couleur selon l’état, avec le compteur des chantiers en cours."""
+    import pydeck as pdk
+    points = [p for p in projets if p.get("latitude") is not None and p.get("longitude") is not None]
+    n_cours = sum(1 for p in projets if p["status"] == "En cours")
+    legende = "".join(f'<span class="bg-legende"><i style="background:rgb({c[0]},{c[1]},{c[2]})"></i>{ui._esc(e)}</span>'
+                      for e, c in COULEURS_ETAT.items())
+    st.html(f'<div class="bg-carte-tete"><div class="g">{legende}</div><span class="bg-compteur"><i></i>'
+            f'{n_cours} chantier{"s" if n_cours > 1 else ""} en cours</span></div>')
+    if not points:
+        st.caption("Aucun chantier n’a encore de coordonnées GPS. Ouvrez un chantier, puis « Modifier ce chantier » "
+                   "pour les ajouter.")
+    donnees = [{"nom": p["name"], "client": R.client_name(s, p["client"]) or "—", "etat": p["status"],
+                "lieu": p.get("location") or "—", "avancement": f"{float(p['progress']):.0f} %",
+                "lat": p["latitude"], "lon": p["longitude"], "couleur": COULEURS_ETAT.get(p["status"], [90, 102, 132]),
+                "halo": COULEURS_ETAT.get(p["status"], [90, 102, 132]) + [60]} for p in points]
+    if points:
+        lat = sum(p["latitude"] for p in points) / len(points)
+        lon = sum(p["longitude"] for p in points) / len(points)
+        ecart = max(max(abs(p["latitude"] - lat), abs(p["longitude"] - lon)) for p in points)
+        zoom = 12 if ecart < .03 else 11 if ecart < .1 else 10 if ecart < .25 else 8 if ecart < 1 else 6
+    else:
+        (lat, lon), zoom = KINSHASA, 10.5
+    couches = [
+        pdk.Layer("ScatterplotLayer", donnees, get_position="[lon, lat]", get_fill_color="halo", get_radius=420,
+                  radius_min_pixels=14, radius_max_pixels=30, pickable=False),
+        pdk.Layer("ScatterplotLayer", donnees, get_position="[lon, lat]", get_fill_color="couleur", get_radius=160,
+                  radius_min_pixels=7, radius_max_pixels=14, stroked=True, get_line_color=[255, 255, 255],
+                  line_width_min_pixels=2, pickable=True),
+    ]
+    st.pydeck_chart(pdk.Deck(layers=couches, initial_view_state=pdk.ViewState(latitude=lat, longitude=lon, zoom=zoom),
+                             map_style="light",
+                             tooltip={"html": "<b>{nom}</b><br/>{client}<br/>{lieu}<br/>État : {etat} · {avancement}",
+                                      "style": {"backgroundColor": "#0f1a6e", "color": "white", "fontSize": "13px",
+                                                "borderRadius": "8px"}}),
+                    height=hauteur, key=f"carte_{hauteur}_{len(points)}")
+
+
 COLONNES = {
     "nom": "Chantier", "client": "Client", "statut": "État", "echeance": "Échéance",
     "avancement": st.column_config.ProgressColumn("Avancement", min_value=0, max_value=100, format="%.0f %%"),
@@ -55,6 +119,9 @@ def formulaire(pid: str | None = None) -> None:
     cli = ui.choix("Client", ui.options_clients(s, p.get("client", "")), f"ch_client_{pid}", p.get("client", ""),
                    vide="Choisir un client (facultatif)")
     lieu = a.text_input("Lieu", value=p.get("location", ""), max_chars=500)
+    gps = a.text_input("Coordonnées GPS (facultatif)", value=texte_gps(p), placeholder="-4.3317, 15.3139",
+                       help="Dans Google Maps, faites un appui long sur le chantier : les deux nombres affichés "
+                            "(latitude, longitude) se copient ici. Ils placent le chantier sur la carte.")
     with b:
         echeance = ui.date_txt("Date de livraison prévue", f"ch_deadline_{pid}", p.get("deadline"), vide_ok=True)
     monnaie = ui.devise("Monnaie", f"ch_cur_{pid}", p.get("currency"))
@@ -71,7 +138,9 @@ def formulaire(pid: str | None = None) -> None:
         try:
             if not nom.strip():
                 raise ValueError("Le nom est obligatoire.")
+            latitude, longitude = lire_gps(gps)
             rec = {"name": nom.strip(), "client": cli or "", "location": lieu.strip(), "deadline": echeance,
+                   "latitude": latitude, "longitude": longitude,
                    "status": statut, "progress": float(avancement), "currency": monnaie,
                    "budget": R.cents(budget, "Budget")}
             if p:
@@ -90,9 +159,11 @@ def formulaire(pid: str | None = None) -> None:
 
 def page() -> None:
     auth.exiger("chantiers")
-    ui.en_tete("Chantiers", "Budgets, avancement et dépenses par chantier.")
     s = R.charger("projects", "clients", "expenses", "supplier_payments", "supplier_reversals", "invoices",
                   "personnel")
+    n = sum(1 for p in s["projects"] if p["status"] == "En cours")
+    ui.en_tete("Chantiers", "Budgets, avancement et dépenses par chantier.",
+               badge=f"{n} chantier{'s' if n > 1 else ''} en cours")
     ecrit = auth.modifie("chantiers")
     if ecrit and st.button("Nouveau chantier", type="primary", icon=":material/add:"):
         formulaire()
@@ -104,6 +175,8 @@ def page() -> None:
         return
     filtre = st.pills("État", R.STATUSES, selection_mode="multi", default=None, key="ch_filtre")
     projets = [p for p in s["projects"] if not filtre or p["status"] in filtre]
+    st.subheader("Carte des chantiers")
+    carte(s, projets)
     rows = lignes(s, projets)
     i = ui.tableau(rows, COLONNES, key="tab_chantiers", selection=True)
     if i is None:
@@ -116,7 +189,8 @@ def page() -> None:
         formulaire(p["id"])
     a, b, c = st.columns(3)
     a.markdown(f"**Client :** {R.client_name(s, p['client'])}  \n**Lieu :** {p['location'] or '—'}  \n"
-               f"**Échéance :** {p['deadline'] or 'Non précisée'}  \n**État :** {p['status']}")
+               f"**Échéance :** {p['deadline'] or 'Non précisée'}  \n**État :** {p['status']}  \n"
+               f"**GPS :** {texte_gps(p) or 'non renseigné'}")
     managed = next((x for x in V.records("budget") if x["project"] == p["id"]), None)
     if managed:
         st.info("Budget DQE et engagements disponibles dans Circuit financier V7. Le budget historique ci-dessous reste une référence antérieure.")

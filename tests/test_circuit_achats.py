@@ -230,6 +230,11 @@ class CircuitAchats(unittest.TestCase):
         self.assertEqual(db.un("v7_records", i)["data"]["statut"], "Soumise")
 
 
+OBSOLETE_V8 = ("Import du circuit transitoire remplacé en V8 : les demandes importées alimentent achats.py "
+               "(article_ref, date_souhaitee obligatoires) et l’import du chiffrage est supprimé ; "
+               "couvert par tests/test_achats_v8.py.")
+
+
 class ImportAchats(CircuitAchats):
     """Upload Excel : demandes en brouillon (prix facultatifs), puis chiffrage par les achats."""
 
@@ -253,6 +258,7 @@ class ImportAchats(CircuitAchats):
                 {"demande_ref": ref, "numero_ligne": 2, "code_dqe": "GO", "article": "Fer HA10", "unite": "barre",
                  "quantite": 120, "prix_unitaire": "7,40", "fournisseur_ref": fournisseur}]})
 
+    @unittest.skip(OBSOLETE_V8)
     def test_import_demande_puis_chiffrage(self):
         from tests.test_imports import classeur
         r = self.importer("demandes_achat", self.fichier_da(), uid=1)
@@ -283,6 +289,7 @@ class ImportAchats(CircuitAchats):
         self.assertTrue(d["lignes"][1]["source_prix"].startswith("achats (corrige"), d["lignes"][1]["source_prix"])
         self.assertEqual((d["lignes"][0]["qte_stock"], d["lignes"][0]["fournisseur"]), (50, "f1"))
 
+    @unittest.skip(OBSOLETE_V8)
     def test_import_controle_droits_perimetre_et_devise(self):
         r = self.importer("demandes_achat", self.fichier_da(devise="EUR"), uid=1)
         self.assertTrue(any(e["field"] == "devise" for e in r["rapport"]["errors"]))
@@ -297,6 +304,7 @@ class ImportAchats(CircuitAchats):
         self.assertTrue(any("périmètre" in e["message"] for e in r["rapport"]["errors"]))
         self.assertEqual([x for x in V.records(A.KIND) if x["ref"].startswith("DA-XL")], [])
 
+    @unittest.skip(OBSOLETE_V8)
     def test_import_chiffrage_par_le_valideur_refuse(self):
         from tests.test_imports import classeur
         self.importer("demandes_achat", self.fichier_da(), uid=1)

@@ -41,81 +41,166 @@ LOGO_CLAIR = os.path.join(_S, "logo_clair.svg")
 
 STYLE = """
 <style>
-/* ===== Jetons de couleur (charte Bâti Gestion) ===== */
-:root{--bg-navy:#112740;--bg-navy-2:#183653;--ambre:#efa63a;--ambre-clair:#ffb347;--bord:#dce4ed;--texte:#172b43;--doux:#5b6e83;--fond:#f2f5f8}
+/* ===== Jetons de couleur : bleu roi + orange chantier (logo Bâti Gestion inchangé) ===== */
+:root{--bg-navy:#0f1a6e;--bg-navy-2:#1a27b5;--bleu:#1a27b5;--bleu-vif:#3d5afe;--ciel:#22b8f0;--ambre:#ff9f1c;--ambre-clair:#ffbe55;
+ --vert:#12b886;--violet:#7048e8;--rose:#f0507a;--bord:#dde3ef;--texte:#16204d;--doux:#5a6684;--fond:#f4f6fb}
+.stApp{background:url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 620 260'%3E%3Ctext x='310' y='190' text-anchor='middle' transform='rotate%28-12 310 130%29' font-family='Archivo,Arial Black,Arial,Helvetica,sans-serif' font-weight='900' font-size='210' letter-spacing='8' fill='%231a27b5' fill-opacity='.05'%3EMDY%3C/text%3E%3C/svg%3E") no-repeat right 3vw bottom 6vh/min(48vw,640px) auto fixed,
+ radial-gradient(1200px 500px at 100% 0,rgba(61,90,254,.07),transparent 60%),radial-gradient(900px 420px at 0 100%,rgba(255,159,28,.06),transparent 60%),#f4f6fb}
+/* Filigrane « MDY » dans le bandeau */
+.bg-bandeau::before{content:"";position:absolute;right:2vw;top:-6%;width:380px;height:112%;pointer-events:none;
+ background:url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 620 260'%3E%3Ctext x='310' y='190' text-anchor='middle' transform='rotate%28-12 310 130%29' font-family='Archivo,Arial Black,Arial,Helvetica,sans-serif' font-weight='900' font-size='210' letter-spacing='8' fill='%23ffffff' fill-opacity='.14'%3EMDY%3C/text%3E%3C/svg%3E") no-repeat center/contain}
+.bg-bandeau .in{position:relative;z-index:1}
+
+/* ===== En-tête blanc : logo + menu horizontal ===== */
+[data-testid="stHeader"]{background:#fff;border-bottom:0;box-shadow:0 2px 10px rgba(15,26,110,.06);height:5rem}
+[data-testid="stHeader"]::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:linear-gradient(90deg,var(--ambre),var(--rose) 35%,var(--bleu-vif) 70%,var(--ciel))}
+[data-testid="stHeader"] a,[data-testid="stHeader"] button{font-weight:600;color:var(--bg-navy)}
+[data-testid="stHeader"] [aria-current="page"],[data-testid="stHeader"] [aria-selected="true"]{color:var(--bleu) !important;box-shadow:inset 0 -3px 0 var(--ambre)}
+[data-testid="stHeaderLogo"],[data-testid="stLogo"]{height:3.4rem !important;max-width:18rem !important;width:auto !important}
 
 /* ===== Mise en page et apparition douce ===== */
-.block-container{padding-top:2rem;padding-bottom:3rem;max-width:1400px}
+[data-testid="stMain"]{overflow-x:hidden}
+.block-container{padding-top:5rem;padding-bottom:3rem;max-width:1320px}
 @keyframes bgApparition{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 [data-testid="stMainBlockContainer"]{animation:bgApparition .4s cubic-bezier(.2,.7,.2,1) both}
 @media (prefers-reduced-motion: reduce){[data-testid="stMainBlockContainer"]{animation:none}*{transition:none !important}}
 
-/* ===== Titres : hiérarchie et filet ambre ===== */
-h1{font-size:2.05rem;font-weight:800;letter-spacing:-.6px;color:var(--bg-navy);margin-bottom:.15rem;display:inline-block;padding-bottom:.4rem;background:linear-gradient(var(--ambre),var(--ambre)) no-repeat left bottom / 44px 4px}
-h2,h3{color:var(--bg-navy-2);letter-spacing:-.3px}
+/* ===== Barre d'outils sous l'en-tête : recherche, alertes, compte ===== */
+.st-key-bg_barre{background:#fff;border:1px solid var(--bord);border-radius:14px;padding:6px 10px;margin:.4rem 0 .2rem 0;
+ box-shadow:0 1px 2px rgba(15,26,110,.04);align-items:center}
+.st-key-bg_barre [data-testid="stCaptionContainer"],.st-key-bg_barre [data-testid="stCaptionContainer"] p{margin:0 !important;padding-left:6px}
+.st-key-bg_barre [data-testid="stPageLink"] a{border:1px solid var(--bord);border-radius:10px;padding:4px 12px;background:#f7f8fc}
+.st-key-bg_barre [data-testid="stPageLink"] a:hover{border-color:var(--bleu);background:#eef1fd}
+.st-key-bg_alerte [data-testid="stPageLink"] a{background:var(--ambre);border-color:var(--ambre)}
+.st-key-bg_alerte [data-testid="stPageLink"] a *{color:#fff !important;font-weight:700}
+.st-key-bg_alerte [data-testid="stPageLink"] a:hover{background:#e0861a;border-color:#e0861a}
+
+/* ===== Bandeau de page : bleu roi pleine largeur, titre et vague ===== */
+.bg-bandeau{position:relative;width:100vw;margin:.6rem 0 1.4rem calc(50% - 50vw);background:var(--bleu);color:#fff;overflow:hidden;
+ background-image:radial-gradient(circle at 88% 10%,rgba(34,184,240,.55) 0,rgba(34,184,240,0) 38%),
+ radial-gradient(circle at 12% 120%,rgba(255,159,28,.35) 0,rgba(255,159,28,0) 40%),linear-gradient(115deg,#1a27b5 0%,#3d5afe 60%,#5b3fe0 100%)}
+.bg-bandeau .in{max-width:1320px;margin:0 auto;padding:2.1rem 5rem 3.6rem 5rem;display:flex;gap:1.5rem;align-items:flex-end;justify-content:space-between;flex-wrap:wrap}
+.bg-bandeau h1{color:#fff;font-size:2.35rem;font-weight:800;letter-spacing:-.6px;margin:0;padding:0;line-height:1.15}
+.bg-bandeau p{color:rgba(255,255,255,.86);font-size:1.02rem;margin:.5rem 0 0 0;max-width:760px;line-height:1.5}
+.bg-bandeau .badge{display:inline-flex;align-items:center;gap:.5rem;background:rgba(15,26,110,.72);backdrop-filter:blur(4px);border:1px solid rgba(255,255,255,.25);color:#fff;border-radius:999px;padding:.55rem 1.1rem;
+ font-weight:700;font-size:.95rem;box-shadow:0 6px 18px rgba(0,0,0,.18);white-space:nowrap}
+.bg-bandeau .badge i{width:.6rem;height:.6rem;border-radius:50%;background:var(--ambre-clair);box-shadow:0 0 0 4px rgba(255,179,71,.28)}
+.bg-bandeau::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:42px;background:url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 42' preserveAspectRatio='none'%3E%3Cpath d='M0 26 C240 4 480 42 720 22 C960 2 1200 40 1440 18 L1440 42 L0 42 Z' fill='%23ffffff' fill-opacity='.18'/%3E%3Cpath d='M0 22 C240 44 480 0 720 22 C960 44 1200 0 1440 22 L1440 42 L0 42 Z' fill='%23f4f6fb'/%3E%3C/svg%3E") no-repeat center/100% 100%}
+
+/* ===== Titres ===== */
+h1{font-size:2.05rem;font-weight:800;letter-spacing:-.6px;color:var(--bg-navy)}
+h2,h3{color:var(--bg-navy);letter-spacing:-.3px}
 .bg-sous{font-size:1rem;color:var(--doux);margin:.85rem 0 1.5rem 0;max-width:820px;line-height:1.5}
 
-/* ===== Barre latérale : sections en capitales, liens arrondis ===== */
+/* ===== Barre latérale (petits écrans) ===== */
 [data-testid="stNavSectionHeader"]{padding:0 14px;margin:1.1rem 0 .25rem 0 !important}
-[data-testid="stNavSectionHeader"] p,[data-testid="stNavSectionHeader"] span{font-size:.7rem !important;font-weight:700 !important;letter-spacing:.12em;text-transform:uppercase;color:#7f95ab !important}
+[data-testid="stNavSectionHeader"] p,[data-testid="stNavSectionHeader"] span{font-size:.7rem !important;font-weight:700 !important;letter-spacing:.12em;text-transform:uppercase;color:#9aa6d6 !important}
 [data-testid="stSidebarNavLink"]{border-radius:10px;margin:2px 8px;transition:background .15s ease,color .15s ease}
 [data-testid="stSidebarNavLink"]:hover{background:rgba(255,179,71,.10)}
 [data-testid="stSidebarNavLink"][aria-current="page"]{background:rgba(255,179,71,.14);box-shadow:inset 3px 0 0 var(--ambre-clair)}
-[data-testid="stSidebar"] hr{border-color:#29445f;opacity:.7}
 
-/* ===== Onglets : pastille ambre sous l'onglet actif ===== */
+/* ===== Onglets : pastille orange sous l'onglet actif ===== */
 [data-baseweb="tab-list"]{gap:6px;border-bottom:1px solid var(--bord)}
 [data-baseweb="tab"]{background:transparent;border-radius:10px 10px 0 0;padding:.6rem 1.05rem;color:var(--doux);font-weight:600;transition:color .15s ease,background .15s ease}
-[data-baseweb="tab"]:hover{color:var(--bg-navy);background:rgba(17,39,64,.04)}
+[data-baseweb="tab"]:hover{color:var(--bleu);background:rgba(26,39,181,.05)}
 [data-baseweb="tab"][aria-selected="true"]{color:var(--bg-navy);font-weight:700;box-shadow:inset 0 -3px 0 var(--ambre)}
 [data-baseweb="tab-highlight"]{background:var(--ambre) !important;height:3px !important}
 [data-baseweb="tab-border"]{display:none}
 
-/* ===== Boutons : principal bleu nuit avec relief au survol ===== */
+/* ===== Boutons : principal bleu roi, secondaire contour ===== */
 [data-testid^="stBaseButton"]{border-radius:10px;font-weight:600;transition:background .18s ease,border-color .18s ease,box-shadow .18s ease,transform .18s ease}
-[data-testid="stBaseButton-primary"]{background:var(--bg-navy-2);border-color:var(--bg-navy-2);color:#fff;box-shadow:0 1px 2px rgba(17,39,64,.18)}
-[data-testid="stBaseButton-primary"]:hover{background:var(--bg-navy);border-color:var(--bg-navy);box-shadow:0 6px 18px rgba(17,39,64,.22);transform:translateY(-1px)}
+[data-testid="stBaseButton-primary"]{background:linear-gradient(120deg,var(--bleu),var(--bleu-vif));border-color:var(--bleu);color:#fff;box-shadow:0 4px 14px rgba(61,90,254,.30)}
+[data-testid="stBaseButton-primary"]:hover{background:linear-gradient(120deg,var(--bg-navy),var(--bleu));border-color:var(--bg-navy);box-shadow:0 8px 22px rgba(61,90,254,.38);transform:translateY(-1px)}
 [data-testid="stBaseButton-primary"]:active{transform:translateY(0)}
-[data-testid="stBaseButton-secondary"]{background:#fff;border-color:#c9d4e0;color:var(--bg-navy-2)}
-[data-testid="stBaseButton-secondary"]:hover{border-color:var(--bg-navy-2);background:#f5f8fb;box-shadow:0 2px 8px rgba(17,39,64,.08)}
+[data-testid="stBaseButton-secondary"]{background:#fff;border-color:#c8d0e4;color:var(--bleu)}
+[data-testid="stBaseButton-secondary"]:hover{border-color:var(--bleu);background:#f3f5fe;box-shadow:0 2px 8px rgba(15,26,110,.08)}
 [data-testid^="stBaseButton"]:disabled{opacity:.45;transform:none}
 :focus-visible{outline:2px solid var(--ambre) !important;outline-offset:2px}
 
+/* ===== Raccourcis (« Actions courantes ») en pastilles ===== */
+.st-key-bg_actions [data-testid="stPageLink"] a{background:#fff;border:1px solid var(--bord);border-radius:12px;padding:8px 14px;
+ box-shadow:0 1px 2px rgba(15,26,110,.04);transition:border-color .15s ease,box-shadow .15s ease,transform .15s ease}
+.st-key-bg_actions [data-testid="stPageLink"] a:hover{border-color:var(--bleu);box-shadow:0 6px 16px rgba(15,26,110,.10);transform:translateY(-1px)}
+
 /* ===== Champs de saisie ===== */
-[data-baseweb="input"],[data-baseweb="select"]>div,[data-baseweb="textarea"]{border-radius:10px !important;border-color:#c9d4e0 !important;background:#fff}
-[data-baseweb="input"]:focus-within,[data-baseweb="select"]>div:focus-within,[data-baseweb="textarea"]:focus-within{border-color:var(--bg-navy-2) !important;box-shadow:0 0 0 3px rgba(24,54,83,.12)}
+[data-baseweb="input"],[data-baseweb="select"]>div,[data-baseweb="textarea"]{border-radius:10px !important;border-color:#c8d0e4 !important;background:#fff}
+[data-baseweb="input"]:focus-within,[data-baseweb="select"]>div:focus-within,[data-baseweb="textarea"]:focus-within{border-color:var(--bleu) !important;box-shadow:0 0 0 3px rgba(26,39,181,.14)}
 
 /* ===== Cartes : métriques, formulaires, blocs repliables ===== */
-[data-testid="stMetric"]{background:#fff;border:1px solid var(--bord);border-radius:14px;padding:16px 18px;box-shadow:0 1px 2px rgba(17,39,64,.04),0 6px 18px rgba(17,39,64,.05);transition:transform .2s ease,box-shadow .2s ease}
-[data-testid="stMetric"]:hover{transform:translateY(-2px);box-shadow:0 2px 4px rgba(17,39,64,.06),0 12px 26px rgba(17,39,64,.09)}
+[data-testid="stMetric"]{background:#fff;border:1px solid var(--bord);border-radius:16px;padding:16px 18px;box-shadow:0 1px 2px rgba(15,26,110,.04),0 8px 22px rgba(15,26,110,.06);transition:transform .2s ease,box-shadow .2s ease}
+[data-testid="stMetric"]:hover{transform:translateY(-2px);box-shadow:0 2px 4px rgba(15,26,110,.06),0 14px 28px rgba(15,26,110,.10)}
 [data-testid="stMetricLabel"]{color:var(--doux);font-weight:600}
 [data-testid="stMetricValue"]{font-size:1.45rem;letter-spacing:-.5px;color:var(--bg-navy)}
-[data-testid="stForm"]{border:1px solid var(--bord);border-radius:14px;background:#fff;padding:1rem 1.15rem;box-shadow:0 1px 2px rgba(17,39,64,.04)}
-[data-testid="stExpander"]{border:1px solid var(--bord);border-radius:14px;background:#fff;overflow:hidden;box-shadow:0 1px 2px rgba(17,39,64,.03)}
-[data-testid="stExpander"] summary{font-weight:600;color:var(--bg-navy-2)}
+[data-testid="stForm"]{border:1px solid var(--bord);border-radius:16px;background:#fff;padding:1rem 1.15rem;box-shadow:0 1px 2px rgba(15,26,110,.04)}
+[data-testid="stExpander"]{border:1px solid var(--bord);border-radius:16px;background:#fff;overflow:hidden;box-shadow:0 1px 2px rgba(15,26,110,.03)}
+[data-testid="stExpander"] summary{font-weight:600;color:var(--bg-navy)}
 
 /* ===== Tableaux et messages ===== */
-[data-testid="stDataFrame"]{border:1px solid var(--bord);border-radius:14px;overflow:hidden;background:#fff;box-shadow:0 1px 2px rgba(17,39,64,.04),0 6px 18px rgba(17,39,64,.04)}
-[data-testid="stDataFrame"] [role="columnheader"]{background:#eef3f8;color:var(--texte);font-weight:700}
-[data-testid="stAlert"]{border-radius:12px;border:1px solid var(--bord);box-shadow:0 1px 2px rgba(17,39,64,.03)}
+[data-testid="stDataFrame"]{border:1px solid var(--bord);border-radius:16px;overflow:hidden;background:#fff;box-shadow:0 1px 2px rgba(15,26,110,.04),0 8px 22px rgba(15,26,110,.05)}
+[data-testid="stDataFrame"] [role="columnheader"]{background:#e9eeff;color:var(--bg-navy);font-weight:700}
+[data-testid="stAlert"]{border-radius:14px;border:1px solid var(--bord);box-shadow:0 1px 2px rgba(15,26,110,.03)}
 [data-testid="stAlert"] p{font-size:.95rem}
 
 /* ===== Repères de statut (chiffres clés et étiquettes) ===== */
-.bg-tag{display:inline-block;background:#fff;border:1px solid var(--bord);border-radius:999px;padding:5px 12px;font-size:.84rem;color:var(--texte);margin:2px 6px 2px 0;box-shadow:0 1px 2px rgba(17,39,64,.04)}
+.bg-tag{display:inline-block;background:#fff;border:1px solid var(--bord);border-radius:999px;padding:5px 12px;font-size:.84rem;color:var(--texte);margin:2px 6px 2px 0;box-shadow:0 1px 2px rgba(15,26,110,.04)}
 .bg-tag b{color:var(--bg-navy)}
 .bg-tag.ok{background:#e6f6ee;border-color:#bfe6cf;color:#176846}
 .bg-tag.alerte{background:#fdeeec;border-color:#f3c4bf;color:#a62d25}
-.bg-carte{background:#fff;border:1px solid var(--bord);border-radius:14px;padding:16px 18px;height:100%;box-shadow:0 1px 2px rgba(17,39,64,.04),0 6px 18px rgba(17,39,64,.05)}
+.bg-carte{background:#fff;border:1px solid var(--bord);border-radius:16px;padding:18px 20px;height:100%;box-shadow:0 1px 2px rgba(15,26,110,.04),0 8px 22px rgba(15,26,110,.06)}
 .bg-carte.accent{border-top:4px solid var(--ambre)}
-.bg-carte .t{font-size:.9rem;color:var(--texte);margin-bottom:.35rem;font-weight:600}
-.bg-carte .n{font-size:1.7rem;font-weight:800;letter-spacing:-1px;color:var(--bg-navy)}
+.bg-carte .t{font-size:.9rem;color:var(--doux);margin-bottom:.35rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em}
+.bg-carte .n{font-size:1.7rem;font-weight:800;letter-spacing:-1px;color:var(--bleu)}
 .bg-carte .m{color:var(--doux);font-size:.85rem}
 .bg-montants{font-variant-numeric:tabular-nums;line-height:1.55}
 .bg-montants b{font-size:1.25rem;letter-spacing:-.3px}
 
+
+/* ===== Couleurs vives : une teinte par carte de chiffres clés ===== */
+[data-testid="stColumn"]:nth-child(1) .bg-carte{border-top:4px solid var(--ambre);background:linear-gradient(180deg,#fff7ea 0,#fff 55%)}
+[data-testid="stColumn"]:nth-child(1) .bg-carte .n{color:#e07f00}
+[data-testid="stColumn"]:nth-child(2) .bg-carte{border-top:4px solid var(--bleu-vif);background:linear-gradient(180deg,#eef1ff 0,#fff 55%)}
+[data-testid="stColumn"]:nth-child(2) .bg-carte .n{color:var(--bleu)}
+[data-testid="stColumn"]:nth-child(3) .bg-carte{border-top:4px solid var(--vert);background:linear-gradient(180deg,#e7f8f1 0,#fff 55%)}
+[data-testid="stColumn"]:nth-child(3) .bg-carte .n{color:#0b8a63}
+[data-testid="stColumn"]:nth-child(4) .bg-carte{border-top:4px solid var(--violet);background:linear-gradient(180deg,#f1edff 0,#fff 55%)}
+[data-testid="stColumn"]:nth-child(4) .bg-carte .n{color:var(--violet)}
+[data-testid="stMetric"]{border-top:4px solid var(--bleu-vif)}
+
+/* ===== Raccourcis : icônes en couleur ===== */
+.st-key-bg_actions [data-testid="stPageLink"] a [data-testid="stIconMaterial"]{font-size:1.35rem}
+.st-key-bg_actions [data-testid="stPageLink"]:nth-of-type(5n+1) [data-testid="stIconMaterial"]{color:var(--bleu-vif) !important}
+.st-key-bg_actions [data-testid="stPageLink"]:nth-of-type(5n+2) [data-testid="stIconMaterial"]{color:var(--ambre) !important}
+.st-key-bg_actions [data-testid="stPageLink"]:nth-of-type(5n+3) [data-testid="stIconMaterial"]{color:var(--vert) !important}
+.st-key-bg_actions [data-testid="stPageLink"]:nth-of-type(5n+4) [data-testid="stIconMaterial"]{color:var(--violet) !important}
+.st-key-bg_actions [data-testid="stPageLink"]:nth-of-type(5n+5) [data-testid="stIconMaterial"]{color:var(--ciel) !important}
+.st-key-bg_actions [data-testid="stElementContainer"]:nth-child(5n+1) [data-testid="stIconMaterial"]{color:var(--bleu-vif) !important}
+.st-key-bg_actions [data-testid="stElementContainer"]:nth-child(5n+2) [data-testid="stIconMaterial"]{color:var(--ambre) !important}
+.st-key-bg_actions [data-testid="stElementContainer"]:nth-child(5n+3) [data-testid="stIconMaterial"]{color:var(--vert) !important}
+.st-key-bg_actions [data-testid="stElementContainer"]:nth-child(5n+4) [data-testid="stIconMaterial"]{color:var(--violet) !important}
+.st-key-bg_actions [data-testid="stElementContainer"]:nth-child(5n+5) [data-testid="stIconMaterial"]{color:var(--ciel) !important}
+
+/* ===== Messages en couleurs franches ===== */
+[data-testid="stAlertContentInfo"]{color:#1a27b5}
+[data-testid="stAlertContainer"]:has([data-testid="stAlertContentWarning"]){border-left:4px solid var(--ambre)}
+[data-testid="stAlertContainer"]:has([data-testid="stAlertContentInfo"]){border-left:4px solid var(--bleu-vif)}
+[data-testid="stAlertContainer"]:has([data-testid="stAlertContentSuccess"]){border-left:4px solid var(--vert)}
+[data-testid="stAlertContainer"]:has([data-testid="stAlertContentError"]){border-left:4px solid var(--rose)}
+
+
+/* ===== Carte des chantiers : légende et compteur ===== */
+.bg-carte-tete{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.6rem;margin:.2rem 0 .5rem 0}
+.bg-carte-tete .g{display:flex;flex-wrap:wrap;gap:.4rem}
+.bg-legende{display:inline-flex;align-items:center;gap:.4rem;background:#fff;border:1px solid var(--bord);border-radius:999px;padding:4px 10px;font-size:.84rem;color:var(--texte)}
+.bg-legende i{width:.7rem;height:.7rem;border-radius:50%;display:inline-block}
+.bg-compteur{display:inline-flex;align-items:center;gap:.5rem;background:var(--bg-navy);color:#fff;border-radius:999px;padding:.5rem 1rem;font-weight:700;font-size:.92rem;box-shadow:0 6px 18px rgba(15,26,110,.22)}
+.bg-compteur i{width:.6rem;height:.6rem;border-radius:50%;background:var(--ambre-clair);box-shadow:0 0 0 4px rgba(255,179,71,.28)}
+[data-testid="stDeckGlJsonChart"]{border-radius:18px;overflow:hidden;border:1px solid var(--bord);box-shadow:0 8px 22px rgba(15,26,110,.08)}
+
 /* ===== Petits écrans : marges de 16 px, pas de défilement horizontal ===== */
 @media (max-width: 760px){
  [data-testid="stMainBlockContainer"].block-container{padding-left:16px;padding-right:16px;padding-top:4.8rem}
+ .bg-bandeau .in{padding:1.4rem 16px 3rem 16px}
+ .bg-bandeau h1{font-size:1.65rem}
  h1{font-size:1.6rem}
  [data-testid="stHorizontalBlock"]{flex-wrap:wrap}
  [data-testid="stMetricValue"]{font-size:1.2rem}
@@ -123,24 +208,44 @@ h2,h3{color:var(--bg-navy-2);letter-spacing:-.3px}
 </style>
 """
 STYLE_CONNEXION = """
-<style>
-[data-testid="stAppViewContainer"]{background:
- linear-gradient(90deg, rgba(17,39,64,.05) 1px, transparent 1px) 0 0/28px 28px,
- linear-gradient(rgba(17,39,64,.05) 1px, transparent 1px) 0 0/28px 28px, #f2f5f8}
-[data-testid="stForm"]{background:#fff;border:1px solid #dce4ed;border-top:4px solid #efa63a;border-radius:10px;padding:8px 6px}
-</style>
+.stApp,[data-testid="stAppViewContainer"]{background:
+ url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 42' preserveAspectRatio='none'%3E%3Cpath d='M0 22 C240 44 480 0 720 22 C960 44 1200 0 1440 22 L1440 42 L0 42 Z' fill='%23f4f6fb'/%3E%3C/svg%3E") no-repeat 0 calc(42vh - 41px)/100% 42px,
+ linear-gradient(180deg,#1a27b5 0,#2434d6 42vh,#f4f6fb 42vh) !important}
+[data-testid="stHeader"]{background:transparent !important;border:0 !important;box-shadow:none !important}
+[data-testid="stForm"]{background:#fff;border:1px solid #dde3ef;border-top:4px solid #f39a2e;border-radius:16px;padding:10px 8px;
+ box-shadow:0 18px 40px rgba(15,26,110,.18)}
+[data-testid="stImage"] img{background:#fff;border-radius:14px;padding:10px 14px;box-shadow:0 10px 30px rgba(15,26,110,.22)}
 """
 
-
 def appliquer_style(connexion: bool = False) -> None:
-    st.html(STYLE + (STYLE_CONNEXION if connexion else ""))
+    # Une seule balise <style> : Streamlit n'en conserve qu'une par bloc HTML.
+    st.html(STYLE.replace("</style>", (STYLE_CONNEXION if connexion else "") + "</style>"))
 
 
-def en_tete(titre: str, sous_titre: str = "") -> None:
-    st.title(titre)
-    if sous_titre:
-        st.html(f'<p class="bg-sous">{_esc(sous_titre)}</p>')
+def en_tete(titre: str, sous_titre: str = "", badge: str = "") -> None:
+    """Bandeau bleu pleine largeur : titre de la page, sous-titre et, au besoin, un badge (ex. « 3 chantiers en cours »)."""
+    pastille = f'<span class="badge"><i></i>{_esc(badge)}</span>' if badge else ""
+    sous = f"<p>{_esc(sous_titre)}</p>" if sous_titre else ""
+    st.html(f'<section class="bg-bandeau"><div class="in"><div><h1>{_esc(titre)}</h1>{sous}</div>{pastille}</div>'
+            '</section>')
     flash()
+
+
+def barre_haut(utilisateur: dict, poste: str) -> None:
+    """Barre d'outils commune sous l'en-tête : usager connecté, recherche, alertes, compte et déconnexion."""
+    import auth
+    import nav
+    with st.container(horizontal=True, key="bg_barre", gap="small", vertical_alignment="center",
+                      horizontal_alignment="distribute"):
+        st.caption(f"Connecté : **{utilisateur['nom']}** · {poste}")
+        with st.container(horizontal=True, gap="small", vertical_alignment="center", width="content"):
+            nav.lien("recherche", "Rechercher", ":material/search:")
+            with st.container(key="bg_alerte", width="content"):
+                nav.lien("rapports", "Alertes", ":material/campaign:")
+            nav.lien("mon-compte", "Mon compte", ":material/person:")
+            if st.button("Se déconnecter", icon=":material/logout:", key="bg_deconnexion"):
+                auth.deconnecter()
+                st.rerun()
 
 
 def _esc(t) -> str:

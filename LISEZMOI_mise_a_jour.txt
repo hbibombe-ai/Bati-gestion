@@ -1,0 +1,25 @@
+Bâti Gestion — mise à jour du 6 novembre 2026
+=============================================
+
+1. Nouveau design (bleu roi, orange, filigrane « MDY »)
+   ui.py, app.py, vues/accueil.py, .streamlit/config.toml
+   - menu horizontal en haut, logo agrandi, barre d'outils (Rechercher, Alertes, Mon compte, Se déconnecter)
+   - bandeau bleu à vague sur chaque page, cartes de chiffres clés en couleurs, filigrane MDY
+
+2. Carte des chantiers
+   db.py, migrations/versions/0006_chantiers_gps.py, vues/chantiers.py, vues/accueil.py
+   - nouveau champ facultatif « Coordonnées GPS » dans la fiche chantier (copier « -4.3317, 15.3139 » depuis Google Maps)
+   - carte sur la page Chantiers et sur l'accueil : un repère par chantier, couleur selon l'état, compteur « en cours »
+   - la base est mise à jour automatiquement au démarrage (migration 0006 : deux colonnes facultatives,
+     aucune donnée existante modifiée)
+
+3. Correction des 21 tests en échec
+   achats_circuit.py, vues/demandes_achat.py, tests/test_circuit_achats.py
+   - l'ancien circuit des demandes d'achat vérifiait des droits supprimés en V8 (approbation_chantier,
+     approbation_coordonnateur) ; il utilise maintenant le contrôle N1, comme prévu dans ACHATS_STOCK_V8.md
+   - 3 tests de l'import de ce circuit transitoire, remplacé en V8, sont marqués obsolètes (l'import V8 reste testé)
+   - nouveau test : tests/test_chantiers_gps.py
+   Résultat : 206 tests réussis, 5 ignorés, 0 échec.
+
+Dépôt : remplacer ou ajouter chaque fichier de l'archive au même emplacement sur GitHub, puis redémarrer
+l'application (« Reboot app ») si elle ne redémarre pas seule.

@@ -81,6 +81,8 @@ projects = sa.Table(
     sa.Column("currency", Str(3), nullable=False),
     sa.Column("status", Str(30), nullable=False),
     sa.Column("progress", sa.Float, nullable=False, default=0),
+    sa.Column("latitude", sa.Float, nullable=True),     # coordonnées GPS facultatives (carte des chantiers)
+    sa.Column("longitude", sa.Float, nullable=True),
 )
 
 

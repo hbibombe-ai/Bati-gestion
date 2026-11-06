@@ -46,10 +46,11 @@ def carte_tresorerie() -> None:
 def page() -> None:
     auth.exiger("accueil")
     s = R.charger()
-    ui.en_tete("Vue d’ensemble", f"{(s['company'].get('name') or 'Bâti Gestion')} — l’essentiel de votre activité.")
+    en_cours = [p for p in s["projects"] if p["status"] == "En cours"]
+    ui.en_tete("Vue d’ensemble", f"{(s['company'].get('name') or 'Bâti Gestion')} — l’essentiel de votre activité.",
+               badge=f"{len(en_cours)} chantier{'s' if len(en_cours) > 1 else ''} en cours")
 
     cols = st.columns(3)
-    en_cours = [p for p in s["projects"] if p["status"] == "En cours"]
     with cols[0]:
         ui.carte("Chantiers en cours", str(len(en_cours)), f"{len(s['projects'])} chantier(s) au total", accent=True)
     if auth.voit("depenses"):
@@ -82,7 +83,7 @@ def page() -> None:
     dispo = [x for x in liens if x[1] in nav.PAGES]
     if dispo:
         st.markdown("**Actions courantes**")
-        with st.container(horizontal=True, gap="medium"):
+        with st.container(horizontal=True, gap="medium", key="bg_actions"):
             for label, url, icone in dispo:
                 nav.lien(url, label, icone)
 
@@ -94,6 +95,7 @@ def page() -> None:
 
     st.subheader("Suivi des chantiers")
     if s["projects"]:
+        vch.carte(s, s["projects"], hauteur=360)
         ordre = sorted(s["projects"], key=lambda p: (p["status"] != "En cours", p["deadline"] or "9999"))
         ui.tableau(vch.lignes(s, ordre[:8]), vch.COLONNES, key="acc_ch")
     else:

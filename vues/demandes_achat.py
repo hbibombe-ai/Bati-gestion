@@ -14,7 +14,7 @@ import regles as R
 import ui
 from vues import imports as centre_imports
 
-MODULES = ["demandes_achat", "approbation_chantier", "chiffrage_achats", "approbation_coordonnateur"]
+MODULES = ["demandes_achat", A.DROIT_CHANTIER, "chiffrage_achats"]
 
 
 def _executer(fn, *args, ok: str = "Enregistré.", **kwargs):
@@ -79,7 +79,7 @@ def _actions(r: dict, s: dict) -> None:
             motif = st.text_input("Motif", key=f"ann_m_{cle}")
             if st.button("Confirmer l’annulation", key=f"ann_{cle}"):
                 _executer(A.annuler, cle, motif, ok="Demande annulée.")
-    if d["statut"] == "Soumise" and auth.modifie("approbation_chantier") and u.get("id") != d["creator"]:
+    if d["statut"] == "Soumise" and auth.modifie(A.DROIT_CHANTIER) and u.get("id") != d["creator"]:
         with st.form(f"chantier_{cle}"):
             st.markdown("**Validation du besoin (chantier)**")
             note = st.text_input("Commentaire de contrôle *", placeholder="ex. quantités conformes au métré")
@@ -91,7 +91,7 @@ def _actions(r: dict, s: dict) -> None:
                       "transmis aux achats.")
     if d["statut"] == "Validée chantier" and auth.modifie("chiffrage_achats") and u.get("id") not in acteurs:
         _chiffrage(r, s)
-    if d["statut"] == "À valider coordonnateur" and auth.modifie("approbation_coordonnateur") \
+    if d["statut"] == "À valider coordonnateur" and auth.modifie(A.DROIT_COORDONNATEUR) \
             and u.get("id") not in acteurs:
         with st.form(f"coord_{cle}"):
             st.markdown("**Validation du coordonnateur de projet**")

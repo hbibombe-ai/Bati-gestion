@@ -184,11 +184,7 @@ for section, titre, url, icone, modules, fn in PAGES:
     nav.PAGES[url] = pg
     sections.setdefault(section, []).append(pg)
 
-st.logo(ui.LOGO_SOMBRE, size="large", icon_image=ui.ICONE)
-with st.sidebar:
-    st.caption(f"Connecté : **{utilisateur['nom']}**  \n{auth.libelle_poste(utilisateur['id'], utilisateur['role'])}")
-    if st.button("Se déconnecter", icon=":material/logout:", width="stretch"):
-        auth.deconnecter()
-        st.rerun()
-
-st.navigation(sections, position="sidebar", expanded=True).run()
+st.logo(ui.LOGO_CLAIR, size="large")
+page_active = st.navigation(sections, position="top")
+ui.barre_haut(utilisateur, auth.libelle_poste(utilisateur['id'], utilisateur['role']))
+page_active.run()

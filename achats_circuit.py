@@ -2,11 +2,11 @@
 
 Étapes :
   1. Demande d'achat (DA) multi-lignes, saisie ou importée par l'équipe chantier ; prix et fournisseur facultatifs.
-  2. Validation du besoin par le chef de chantier ou le directeur de projet (rubrique « approbation_chantier »).
+  2. Validation du besoin par le chef de chantier ou le directeur de projet (contrôle N1, rubrique « approbation_n1 »).
   3. Chiffrage par les achats : fournisseur et prix pour chaque ligne, confirmation ou correction des prix
      proposés, quantité servie par le stock (rubrique « chiffrage_achats »).
   4. Validation du coordonnateur de projet au-delà du seuil de la devise, ou si un poste DQE dépasse son
-     disponible (rubrique « approbation_coordonnateur »).
+     disponible (contrôle N1, rubrique « approbation_n1 »).
   5. Transmission au circuit financier V7 : une opération « Achat » par fournisseur et par poste DQE, soumise
      automatiquement, qui suit ensuite N1 → N2 → N3 → DG, la commande, la réception, la facture et le paiement.
   6. Commande groupée : une même référence de bon de commande pour plusieurs opérations approuvées d'un fournisseur.
@@ -34,6 +34,11 @@ STATUTS = ("Brouillon", "Soumise", "Validée chantier", "À valider coordonnateu
 COMPTE_DEFAUT = "602"          # Achats de matières (plan proposé du circuit V7)
 POLITIQUE_DEFAUT = {"seuil_coordonnateur": {c: 0 for c in R.CURRENCIES}, "compte": COMPTE_DEFAUT}
 LIGNES_MAX = 200
+# V8 : les rubriques transitoires « approbation_chantier » et « approbation_coordonnateur » sont supprimées ;
+# le chef de chantier et le coordonnateur valident au niveau N1 (ACHATS_STOCK_V8.md). La séparation des personnes
+# reste contrôlée demande par demande.
+DROIT_CHANTIER = "approbation_n1"
+DROIT_COORDONNATEUR = "approbation_n1"
 QTE_MAX = Decimal("1000000000")
 
 
@@ -209,7 +214,7 @@ def valider_chantier(id_: str, commentaire: str, rejeter: bool = False) -> None:
     with db.transaction("Validation chantier de la demande d’achat") as t:
         r = V.get(t, id_, KIND)
         d = deepcopy(r["data"])
-        _exiger(u, "approbation_chantier", r["project"], "Validation réservée au chef de chantier ou au directeur de projet.", t)
+        _exiger(u, DROIT_CHANTIER, r["project"], "Validation réservée au chef de chantier ou au directeur de projet.", t)
         if d["statut"] != "Soumise":
             raise ValueError("Aucune validation chantier en attente.")
         if u["id"] == d["creator"]:
@@ -321,7 +326,7 @@ def valider_coordonnateur(id_: str, commentaire: str, rejeter: bool = False) -> 
     with db.transaction("Validation coordonnateur de la demande d’achat") as t:
         r = V.get(t, id_, KIND)
         d = deepcopy(r["data"])
-        _exiger(u, "approbation_coordonnateur", r["project"], "Validation réservée au coordonnateur de projet.", t)
+        _exiger(u, DROIT_COORDONNATEUR, r["project"], "Validation réservée au coordonnateur de projet.", t)
         if d["statut"] != "À valider coordonnateur":
             raise ValueError("Aucune validation coordonnateur en attente.")
         if u["id"] in (d["creator"], *_acteurs(d).values()):
@@ -417,12 +422,12 @@ def a_traiter(u: dict) -> dict[str, list[dict]]:
     for r in demandes(u):
         d = r["data"]
         acteurs = {d["creator"], *_acteurs(d).values()}
-        if d["statut"] == "Soumise" and V.peut(u, "approbation_chantier") and u["id"] != d["creator"] \
+        if d["statut"] == "Soumise" and V.peut(u, DROIT_CHANTIER) and u["id"] != d["creator"] \
                 and auth.sur_chantier(u, r["project"]):
             out["chantier"].append(r)
         elif d["statut"] == "Validée chantier" and V.peut(u, "chiffrage_achats") and u["id"] not in acteurs:
             out["chiffrage"].append(r)
-        elif d["statut"] == "À valider coordonnateur" and V.peut(u, "approbation_coordonnateur") \
+        elif d["statut"] == "À valider coordonnateur" and V.peut(u, DROIT_COORDONNATEUR) \
                 and u["id"] not in acteurs and auth.sur_chantier(u, r["project"]):
             out["coordonnateur"].append(r)
         elif d["statut"] in ("Brouillon", "Rejetée") and d["creator"] == u["id"]:
