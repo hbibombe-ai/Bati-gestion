@@ -389,6 +389,30 @@ def moteur() -> sa.Engine:
     return eng
 
 
+def _empreinte_migrations() -> tuple[str, ...]:
+    """Liste des fichiers de migration présents : elle change dès qu'une nouvelle migration est déposée."""
+    dossier = os.path.join(os.path.dirname(os.path.abspath(__file__)), "migrations", "versions")
+    try:
+        return tuple(sorted(f for f in os.listdir(dossier) if f.endswith(".py")))
+    except OSError:
+        return ()
+
+
+@st.cache_resource(show_spinner=False)
+def _schema_a_jour(empreinte: tuple[str, ...]) -> bool:
+    # Pas de « _ » devant le paramètre : Streamlit ignorerait sa valeur et ne relancerait jamais la mise à jour.
+    migrer(moteur())
+    return True
+
+
+def assurer_schema() -> None:
+    """Applique les nouvelles migrations sans redémarrer le serveur. Streamlit Cloud recharge le code déposé sur
+    GitHub sans relancer le processus : la connexion mise en cache ne repasse donc pas par migrer(). Ici, le cache
+    dépend de la liste des fichiers de migration ; une nouvelle migration déclenche la mise à jour au premier
+    affichage suivant (opération sans effet si la base est déjà à jour)."""
+    _schema_a_jour(_empreinte_migrations())
+
+
 def migrer(eng: sa.Engine) -> None:
     """Met le schéma à jour par les migrations Alembic versionnées (dossier migrations/), au lieu de la
     création implicite des tables. Une base existante est reprise par la révision de base sans perte."""

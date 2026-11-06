@@ -18,6 +18,7 @@ import ui
 st.set_page_config(page_title="Bâti Gestion · MY DESTINY", page_icon=ui.ICONE, layout="wide",
                    initial_sidebar_state="auto")
 db.moteur()
+db.assurer_schema()   # nouvelles migrations appliquées même sans redémarrage du serveur
 auth.assurer_admin_initial()
 
 

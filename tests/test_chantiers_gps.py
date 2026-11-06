@@ -37,3 +37,37 @@ class GpsChantiers(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MigrationSansRedemarrage(unittest.TestCase):
+    """Streamlit Cloud recharge le code sans relancer le serveur : la migration 0006 doit tout de même s'appliquer."""
+
+    def setUp(self):
+        db._schema_a_jour.clear()
+
+    def test_base_en_0005_mise_a_jour_au_premier_affichage(self):
+        import os
+        from alembic import command
+        from alembic.config import Config
+        eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        racine = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cfg = Config(os.path.join(racine, "alembic.ini"))
+        cfg.set_main_option("script_location", os.path.join(racine, "migrations"))
+        with eng.begin() as c:                      # base de production restée en 0005
+            cfg.attributes["connection"] = c
+            command.upgrade(cfg, "0005_arretes_caisse")
+        with patch.object(db, "moteur", lambda: eng):
+            db.assurer_schema()
+        import sqlalchemy as sa
+        colonnes = {c["name"] for c in sa.inspect(eng).get_columns("projects")}
+        self.assertTrue({"latitude", "longitude"} <= colonnes)
+
+    def test_relance_seulement_si_nouvelle_migration(self):
+        with patch.object(db, "moteur", lambda: None), patch.object(db, "migrer") as m, \
+                patch.object(db, "_empreinte_migrations", return_value=("0005.py",)):
+            db.assurer_schema()
+            db.assurer_schema()
+            self.assertEqual(m.call_count, 1)        # rien à refaire tant qu'aucune migration n'est ajoutée
+            with patch.object(db, "_empreinte_migrations", return_value=("0005.py", "0006.py")):
+                db.assurer_schema()
+            self.assertEqual(m.call_count, 2)        # nouvelle migration déposée : mise à jour immédiate
