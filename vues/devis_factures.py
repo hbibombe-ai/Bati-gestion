@@ -10,6 +10,7 @@ import pandas as pd
 import streamlit as st
 
 import auth
+import composants as C
 import db
 import pdf
 import regles as R
@@ -190,12 +191,21 @@ def reglement(did: str) -> None:
             ui.succes("Règlement et journal mis à jour.")
 
 
+ETAPES_PAIEMENT = ["À régler", "Partiellement réglée", "Réglée"]
+
+
 def page(kind: str) -> None:
     auth.exiger("commercial")
     titre = NOMS[kind][0]
+    s = R.charger("clients", "projects", "quotes", "invoices")
+    cle = f"doc_{kind}"
+    sel = C.fiche_ouverte(cle)
+    d = next((x for x in s[kind] if x["id"] == sel), None) if sel else None
+    if d:
+        _fiche(kind, s, d, cle)
+        return
     ui.en_tete(titre, "Préparez et imprimez vos propositions." if kind == "quotes"
                else "Suivez les montants facturés et les règlements.")
-    s = R.charger("clients", "projects", "quotes", "invoices")
     if kind != "invoices":
         _gestion(kind, s)
         return
@@ -204,6 +214,28 @@ def page(kind: str) -> None:
         _gestion(kind, s)
     with onglet_telecharger:
         _telecharger(s)
+
+
+def _carte(kind: str):
+    teintes = {"Brouillon": ("#edf0f7", "#5a6684"), "Envoyé": ("#e9eeff", "#1a27b5"), "Accepté": ("#e3f7ef", "#0b7a56"),
+               "Refusé": ("#fde7ee", "#b0234d"), "Réglée": ("#e3f7ef", "#0b7a56"), "À régler": ("#fff1dc", "#b35c00"),
+               "Partiellement réglée": ("#e9eeff", "#1a27b5"), "En retard": ("#fdeeec", "#a62d25")}
+    bord = {"Accepté": "#12b886", "Réglée": "#12b886", "Refusé": "#f0507a", "En retard": "#f0507a", "Envoyé": "#3d5afe",
+            "À régler": "#ff9f1c", "Partiellement réglée": "#3d5afe"}
+
+    def carte(r: dict) -> dict:
+        etat = r["_etat"]
+        tags = [(etat, *teintes.get(etat, ("#eef1fd", "#1a27b5")))]
+        if r.get("_retard"):
+            tags.append(("En retard", *teintes["En retard"]))
+        if r.get("_facture"):
+            tags.append(("Facturé", "#e3f7ef", "#0b7a56"))
+        lignes = [r["chantier"] if r["chantier"] != "—" else "", f"Date : {r['date']}",
+                  f"Reste : {r['reste']}" if kind == "invoices" and r["reste"] != "Réglée" else ""]
+        return {"titre": f"{r['num']} · {r['total']}", "sous_titre": r["client"], "initiales": C.initiales(r["client"]),
+                "couleur": bord.get("En retard" if r.get("_retard") else etat, "#c8d0e4"), "lignes": lignes,
+                "etiquettes": tags}
+    return carte
 
 
 def _gestion(kind: str, s: dict) -> None:
@@ -223,6 +255,7 @@ def _gestion(kind: str, s: dict) -> None:
             f'<span class="bg-tag">{lbl} : <b>{ui._esc(ui.montants_texte(R.totals_by_currency(docs, fn), True))}</b></span>'
             for lbl, fn in (("Facturé", R.total), ("Reste à encaisser", lambda x: R.total(x) - x["paid"]))) + "</div>")
     rows = []
+    aujourd_hui = R.today()
     for d in docs:
         row = {"_id": d["id"], "num": d["number"], "date": d["date"], "client": R.client_name(s, d["client"]),
                "chantier": R.project_name(s, d["project"]) if d["project"] else "—",
@@ -230,20 +263,45 @@ def _gestion(kind: str, s: dict) -> None:
         if kind == "invoices":
             reste = R.total(d) - d["paid"]
             row.update(recu=R.money(d["paid"], d["currency"]), reste="Réglée" if reste == 0 else R.money(reste, d["currency"]),
-                       echeance=d["due"] or "—")
+                       echeance=d["due"] or "—", _etat=_etat_paiement(d),
+                       _retard=bool(d["due"]) and d["due"] < aujourd_hui and reste > 0)
         else:
-            row["etat"] = d["status"] + (" · facturé" if any(i["quote_id"] == d["id"] for i in s["invoices"]) else "")
+            facture = any(i["quote_id"] == d["id"] for i in s["invoices"])
+            row.update(etat=d["status"] + (" · facturé" if facture else ""), _etat=d["status"], _facture=facture)
         rows.append(row)
     cols = {"num": "Document", "date": "Date", "client": "Client", "chantier": "Chantier", "total": "Total"}
     cols.update({"recu": "Reçu", "reste": "Reste à payer", "echeance": "Échéance"} if kind == "invoices"
                 else {"etat": "État"})
-    i = ui.tableau(rows, cols, key=f"tab_{kind}", selection=True)
-    if i is None:
-        st.caption("Sélectionnez un document pour l’imprimer, le modifier ou " +
-                   ("le facturer." if kind == "quotes" else "enregistrer un règlement."))
-        return
-    d = next(x for x in s[kind] if x["id"] == rows[i]["_id"])
-    st.subheader(f"{NOMS[kind][2].capitalize()} {d['number']}")
+    if kind == "invoices":
+        filtres = [(e, "Paiement", (lambda e: lambda r: r["_etat"] == e)(e)) for e in ETAPES_PAIEMENT]
+        filtres.append(("En retard", "Alerte", lambda r: r["_retard"]))
+        groupes = {"Paiement": ("_etat", ETAPES_PAIEMENT), "Client": ("client", None), "Chantier": ("chantier", None)}
+    else:
+        filtres = [(e, "État", (lambda e: lambda r: r["_etat"] == e)(e)) for e in R.QUOTE_STATUSES]
+        filtres.append(("Non facturés", "Facturation", lambda r: not r["_facture"]))
+        groupes = {"État": ("_etat", R.QUOTE_STATUSES), "Client": ("client", None), "Chantier": ("chantier", None)}
+    C.vue_liste(f"doc_{kind}", rows, cols, recherche=("num", "client", "chantier", "date"), filtres=filtres,
+                regroupements=groupes, regroupement_defaut="État" if kind == "quotes" else None,
+                carte=_carte(kind), vue_defaut="Kanban" if kind == "quotes" else "Liste",
+                nom=NOMS[kind][1], nom_pluriel="devis" if kind == "quotes" else "factures")
+
+
+def _etat_paiement(d: dict) -> str:
+    reste = R.total(d) - d["paid"]
+    return "Réglée" if reste <= 0 else "Partiellement réglée" if d["paid"] > 0 else "À régler"
+
+
+def _fiche(kind: str, s: dict, d: dict, cle: str) -> None:
+    ecrit = auth.modifie("commercial")
+    C.fil_ariane(NOMS[kind][0], f"{NOMS[kind][2].capitalize()} {d['number']}", cle)
+    if kind == "quotes":
+        nouvel = C.barre_etapes(R.QUOTE_STATUSES, d["status"], cle=f"q_{d['id']}", modifiable=ecrit)
+        if nouvel:
+            with db.transaction(f"Devis {d['number']} : état « {nouvel} »") as t:
+                t.maj("quotes", d["id"], {"status": nouvel})
+            ui.succes(f"Devis {d['number']} : {nouvel}.")
+    else:
+        C.barre_etapes(ETAPES_PAIEMENT, _etat_paiement(d), cle=f"f_{d['id']}")
     b = ui.rangee(4)
     with b[0]:
         ui.telecharger("Imprimer / PDF", document_pdf(kind, d, s), f"{d['number']}.pdf", ui.MIME_PDF,
@@ -268,10 +326,20 @@ def _gestion(kind: str, s: dict) -> None:
                 reglement(d["id"])
         else:
             b[2].caption("Facture réglée.")
-    st.dataframe(pd.DataFrame([{"Prestation": l["description"], "Quantité": l["qty"],
-                                "Prix unitaire": R.money(l["price"], d["currency"]),
-                                "Montant": R.money(R.js_round(float(l["qty"]) * l["price"]), d["currency"])}
-                               for l in d["lines"]]), hide_index=True, width="stretch")
+    gauche, droite = st.columns([1.75, 1], gap="medium")
+    with gauche:
+        with st.container(key="bg_feuille"):
+            st.markdown(f"**Client :** {R.client_name(s, d['client'])}  \n**Chantier :** "
+                        f"{R.project_name(s, d['project']) if d['project'] else '—'}  \n**Date :** {d['date']}"
+                        + (f"  \n**Échéance :** {d['due'] or '—'}  \n**Reçu :** {R.money(d['paid'], d['currency'])}"
+                           if kind == "invoices" else ""))
+            st.dataframe(pd.DataFrame([{"Prestation": l["description"], "Quantité": l["qty"],
+                                        "Prix unitaire": R.money(l["price"], d["currency"]),
+                                        "Montant": R.money(R.js_round(float(l["qty"]) * l["price"]), d["currency"])}
+                                       for l in d["lines"]]), hide_index=True, width="stretch")
+            st.markdown(f"**Total : {R.money(R.total(d), d['currency'])}**")
+    with droite:
+        C.fil_activite(kind, d["id"])
 
 
 def _nom_fichier(texte: str) -> str:

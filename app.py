@@ -11,6 +11,7 @@ from __future__ import annotations
 import streamlit as st
 
 import auth
+import composants
 import db
 import nav
 import ui
@@ -95,6 +96,7 @@ if utilisateur.get("doit_changer_mdp"):
     st.stop()
 
 ui.appliquer_style()
+composants.appliquer_style_erp()
 
 # ------------------------------------------------------------------ navigation
 try:
@@ -181,11 +183,22 @@ nav.PAGES.clear()
 for section, titre, url, icone, modules, fn in PAGES:
     if modules and not any(auth.voit(m) for m in modules):
         continue
-    pg = st.Page(fn, title=titre, url_path=url, icon=f":material/{icone}:", default=(url == "vue-ensemble"))
+    pg = st.Page(fn, title=titre, url_path=url, icon=f":material/{icone}:")
     nav.PAGES[url] = pg
     sections.setdefault(section, []).append(pg)
 
-st.logo(ui.LOGO_CLAIR, size="large")
-page_active = st.navigation(sections, position="top")
-ui.barre_haut(utilisateur, auth.libelle_poste(utilisateur['id'], utilisateur['role']))
+
+def applications() -> None:
+    composants.page_applications(sections, utilisateur)
+
+
+# Accueil façon Odoo : une grille d'applications, puis une barre propre à chaque module (menu natif masqué).
+page_apps = st.Page(applications, title="Applications", url_path=composants.URL_APPLICATIONS, icon=":material/apps:",
+                    default=True)
+nav.PAGES[composants.URL_APPLICATIONS] = page_apps
+
+st.logo(ui.LOGO_CLAIR, size="large", link=None)
+page_active = st.navigation({"": [page_apps], **sections}, position="hidden")
+composants.barre_module(page_active, page_apps, sections, utilisateur,
+                        auth.libelle_poste(utilisateur['id'], utilisateur['role']))
 page_active.run()

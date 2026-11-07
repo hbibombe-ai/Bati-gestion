@@ -4,6 +4,7 @@ from __future__ import annotations
 import streamlit as st
 
 import auth
+import composants as C
 import db
 import gestion_v7 as V
 import regles as R
@@ -157,14 +158,39 @@ def formulaire(pid: str | None = None) -> None:
             ui.succes("Chantier enregistré.")
 
 
+ETAT_TEINTES = {"À démarrer": "#3d5afe", "En cours": "#ff9f1c", "Suspendu": "#f0507a", "Terminé": "#12b886"}
+ETAT_ETIQUETTES = {"À démarrer": ("#e9eeff", "#1a27b5"), "En cours": ("#fff1dc", "#b35c00"),
+                   "Suspendu": ("#fde7ee", "#b0234d"), "Terminé": ("#e3f7ef", "#0b7a56")}
+
+
+def carte_kanban(r: dict) -> dict:
+    """Carte kanban d'un chantier : client, lieu, échéance, avancement, budget et disponible."""
+    fond, txt = ETAT_ETIQUETTES.get(r["statut"], ("#eef1fd", "#1a27b5"))
+    etiquettes = [(r["statut"], fond, txt)]
+    if r.get("en_retard"):
+        etiquettes.append(("En retard", "#fdeeec", "#a62d25"))
+    if r["reste"].startswith("Dépassement"):
+        etiquettes.append(("Budget dépassé", "#fdeeec", "#a62d25"))
+    return {"titre": r["nom"], "sous_titre": r["client"] or "Sans client", "initiales": C.initiales(r["nom"]),
+            "couleur_avatar": ETAT_TEINTES.get(r["statut"], "#5a6684"), "couleur": ETAT_TEINTES.get(r["statut"], "#c8d0e4"),
+            "lignes": [f"Lieu : {r['lieu']}" if r.get("lieu") else "", f"Échéance : {r['echeance']}" if r["echeance"] else "",
+                       f"Budget : {r['budget']}", r["reste"]],
+            "progression": r["avancement"], "etiquettes": etiquettes}
+
+
 def page() -> None:
     auth.exiger("chantiers")
     s = R.charger("projects", "clients", "expenses", "supplier_payments", "supplier_reversals", "invoices",
                   "personnel")
+    ecrit = auth.modifie("chantiers")
+    sel = C.fiche_ouverte("ch")
+    p = next((x for x in s["projects"] if x["id"] == sel), None) if sel else None
+    if p:
+        fiche(s, p, ecrit)
+        return
     n = sum(1 for p in s["projects"] if p["status"] == "En cours")
     ui.en_tete("Chantiers", "Budgets, avancement et dépenses par chantier.",
                badge=f"{n} chantier{'s' if n > 1 else ''} en cours")
-    ecrit = auth.modifie("chantiers")
     if ecrit and st.button("Nouveau chantier", type="primary", icon=":material/add:"):
         formulaire()
     if ecrit:
@@ -173,43 +199,71 @@ def page() -> None:
     if not s["projects"]:
         st.info("Organisez vos travaux : ajoutez un premier chantier, son client et son budget.")
         return
-    filtre = st.pills("État", R.STATUSES, selection_mode="multi", default=None, key="ch_filtre")
-    projets = [p for p in s["projects"] if not filtre or p["status"] in filtre]
-    st.subheader("Carte des chantiers")
-    carte(s, projets)
-    rows = lignes(s, projets)
-    i = ui.tableau(rows, COLONNES, key="tab_chantiers", selection=True)
-    if i is None:
-        st.caption("Sélectionnez un chantier dans le tableau pour l'ouvrir ou le modifier.")
-        return
-    p = next(x for x in s["projects"] if x["id"] == rows[i]["_id"])
-    st.subheader(p["name"])
-    ui.pieces_jointes("chantiers", p["id"], peut_ajouter=ecrit)
-    if ecrit and st.button("Modifier ce chantier", icon=":material/edit:"):
-        formulaire(p["id"])
-    a, b, c = st.columns(3)
-    a.markdown(f"**Client :** {R.client_name(s, p['client'])}  \n**Lieu :** {p['location'] or '—'}  \n"
-               f"**Échéance :** {p['deadline'] or 'Non précisée'}  \n**État :** {p['status']}  \n"
-               f"**GPS :** {texte_gps(p) or 'non renseigné'}")
-    managed = next((x for x in V.records("budget") if x["project"] == p["id"]), None)
-    if managed:
-        st.info("Budget DQE et engagements disponibles dans Circuit financier V7. Le budget historique ci-dessous reste une référence antérieure.")
-    b.markdown(f"**Budget historique :** {R.money(p['budget'], p['currency'])}  \n**Décaissements :** "
-               f"{ui.montants_texte(decaissements(s, p['id']), True, consolide_aussi=True)}")
-    if auth.voit("commercial"):
-        fac = [x for x in s["invoices"] if x["project"] == p["id"]]
-        c.markdown("**Facturé :** " + ui.montants_texte(R.totals_by_currency(fac, R.total), True, consolide_aussi=True) + "  \n**Reste à "
-                   "encaisser :** " + ui.montants_texte(R.totals_by_currency(fac, lambda x: R.total(x) - x["paid"]), True, consolide_aussi=True))
-    if auth.voit("depenses"):
-        dep = sorted([e for e in s["expenses"] if e["project"] == p["id"]], key=lambda e: e["date"], reverse=True)
-        st.markdown("**Dépenses du chantier**")
-        if dep:
-            ui.tableau([{"date": e["date"], "libelle": e["label"], "cat": e["category"],
-                         "montant": R.money(e["amount"], e["currency"])} for e in dep],
-                       {"date": "Date", "libelle": "Libellé", "cat": "Catégorie", "montant": "Montant"},
-                       key="tab_dep_ch")
-        else:
-            st.caption("Aucune dépense enregistrée sur ce chantier.")
-    equipe = [x["name"] for x in s["personnel"] if x["active"] and x["location"] == "Chantier" and x["project"] == p["id"]]
-    if equipe:
-        st.markdown("**Personnel affecté :** " + ", ".join(equipe))
+    rows = lignes(s, s["projects"])
+    aujourd_hui = R.today()
+    for r, p in zip(rows, s["projects"]):
+        r["lieu"] = p.get("location") or ""
+        r["en_retard"] = bool(p["deadline"]) and p["deadline"] < aujourd_hui and p["status"] != "Terminé"
+    rows.sort(key=lambda r: r["nom"].lower())
+    projets = {p["id"]: p for p in s["projects"]}
+    filtres = [(e, "État", (lambda e: lambda r: r["statut"] == e)(e)) for e in R.STATUSES]
+    filtres += [("En retard", "Alerte", lambda r: r["en_retard"]),
+                ("Budget dépassé", "Alerte", lambda r: r["reste"].startswith("Dépassement"))]
+    C.vue_liste("ch", rows, COLONNES, recherche=("nom", "client", "lieu", "statut"), filtres=filtres,
+                regroupements={"État": ("statut", R.STATUSES), "Client": ("client", None)},
+                regroupement_defaut="État", carte=carte_kanban, vue_defaut="Kanban",
+                vues_sup={"Carte": lambda rs: carte(s, [projets[r["_id"]] for r in rs])},
+                nom="chantier", couleurs_groupes=ETAT_TEINTES)
+
+
+def fiche(s: dict, p: dict, ecrit: bool) -> None:
+    """Fiche chantier : étapes cliquables, informations, dépenses, documents et fil d'activité."""
+    C.fil_ariane("Chantiers", p["name"], "ch")
+    with st.container(horizontal=True, gap="small", vertical_alignment="center", horizontal_alignment="distribute"):
+        with st.container(horizontal=True, gap="small", width="content"):
+            if ecrit and st.button("Modifier", icon=":material/edit:", type="primary", key="ch_modifier"):
+                formulaire(p["id"])
+        nouvel = C.barre_etapes(R.STATUSES, p["status"], cle=f"ch_{p['id']}", modifiable=ecrit)
+    if nouvel:
+        with db.transaction(f"Chantier {p['name']} : état « {nouvel} »") as t:
+            t.maj("projects", p["id"], {"status": nouvel})
+        ui.succes(f"État du chantier : {nouvel}.")
+    gauche, droite = st.columns([1.75, 1], gap="medium")
+    with gauche:
+        with st.container(key="bg_feuille"):
+            st.subheader(p["name"])
+            st.progress(min(100, int(float(p["progress"]))) / 100, text=f"Avancement : {float(p['progress']):.0f} %")
+            a, b, c = st.columns(3)
+            a.markdown(f"**Client :** {R.client_name(s, p['client']) or '—'}  \n**Lieu :** {p['location'] or '—'}  \n"
+                       f"**Échéance :** {p['deadline'] or 'Non précisée'}  \n**GPS :** {texte_gps(p) or 'non renseigné'}")
+            managed = next((x for x in V.records("budget") if x["project"] == p["id"]), None)
+            b.markdown(f"**Budget historique :** {R.money(p['budget'], p['currency'])}  \n**Décaissements :** "
+                       f"{ui.montants_texte(decaissements(s, p['id']), True, consolide_aussi=True)}")
+            if auth.voit("commercial"):
+                fac = [x for x in s["invoices"] if x["project"] == p["id"]]
+                c.markdown("**Facturé :** " + ui.montants_texte(R.totals_by_currency(fac, R.total), True, consolide_aussi=True)
+                           + "  \n**Reste à encaisser :** " + ui.montants_texte(
+                               R.totals_by_currency(fac, lambda x: R.total(x) - x["paid"]), True, consolide_aussi=True))
+            if managed:
+                st.info("Budget DQE et engagements disponibles dans Circuit financier V7. Le budget historique ci-dessus "
+                        "reste une référence antérieure.")
+            onglets = ["Dépenses", "Équipe", "Documents"] if auth.voit("depenses") else ["Équipe", "Documents"]
+            tabs = dict(zip(onglets, st.tabs(onglets)))
+            if "Dépenses" in tabs:
+                with tabs["Dépenses"]:
+                    dep = sorted([e for e in s["expenses"] if e["project"] == p["id"]], key=lambda e: e["date"], reverse=True)
+                    if dep:
+                        ui.tableau([{"date": e["date"], "libelle": e["label"], "cat": e["category"],
+                                     "montant": R.money(e["amount"], e["currency"])} for e in dep],
+                                   {"date": "Date", "libelle": "Libellé", "cat": "Catégorie", "montant": "Montant"},
+                                   key="tab_dep_ch")
+                    else:
+                        st.caption("Aucune dépense enregistrée sur ce chantier.")
+            with tabs["Équipe"]:
+                equipe = [x["name"] for x in s["personnel"] if x["active"] and x["location"] == "Chantier"
+                          and x["project"] == p["id"]]
+                st.markdown(", ".join(equipe) if equipe else "Aucun membre du personnel affecté à ce chantier.")
+            with tabs["Documents"]:
+                ui.pieces_jointes("chantiers", p["id"], peut_ajouter=ecrit)
+    with droite:
+        C.fil_activite("projects", p["id"], peut_noter=auth.voit("chantiers"))

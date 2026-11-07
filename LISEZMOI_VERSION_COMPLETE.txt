@@ -1,0 +1,33 @@
+BatiGestion — version complète fusionnée (7 novembre 2026)
+==========================================================
+
+Ce dossier = application complète + correctif de migration (GPS) + design + interface façon Odoo.
+Les 3 zips précédents sont fusionnés ici ; vous n'avez plus besoin d'eux.
+
+IMPORTANT : vos données ne sont pas dans ce dossier. Elles sont dans la base de données de l'application
+en ligne. Pour les garder, suivez UNE des deux méthodes.
+
+Avant tout : sauvegarde
+-----------------------
+Dans l'application actuelle (bati-gestion), menu Paramètres > Paramètres et sauvegarde >
+« Préparer la sauvegarde complète (JSON) » puis « Télécharger la sauvegarde ». Gardez ce fichier.
+
+Méthode A (recommandée) : mettre à jour l'ancienne application
+---------------------------------------------------------------
+Dépôt GitHub « Bati-gestion » > Add file > Upload files, déposer :
+  app.py, composants.py, vues/chantiers.py, vues/tiers.py, vues/devis_factures.py,
+  tests/test_interface_erp.py, .streamlit/config.toml
+(seuls ces fichiers diffèrent du dépôt actuel). Commit, puis vérifier l'application.
+Vos comptes, mots de passe et données restent tels quels.
+
+Méthode B : utiliser la nouvelle application (Bati-gestionOD)
+--------------------------------------------------------------
+1. Si l'ancienne app a des secrets (DATABASE_URL ou [database] url) : copiez-les tels quels dans
+   Manage app > Settings > Secrets de la nouvelle app, puis Reboot. Vous retrouvez vos comptes et données.
+2. Si l'ancienne app n'a pas de secrets (base locale) : connectez-vous à la nouvelle avec admin / changez-moi,
+   choisissez un mot de passe, puis Paramètres et sauvegarde > « Sauvegarde de cette application » >
+   choisir le fichier JSON téléchargé > cocher la confirmation > Importer. Les comptes des autres
+   utilisateurs sont à recréer (la sauvegarde JSON ne contient pas les mots de passe).
+
+GitHub n'accepte que 100 fichiers par envoi : pour un dépôt neuf, envoyez le dossier en deux fois.
+Tests : 216 réussis, 5 ignorés.
