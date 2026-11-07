@@ -4,6 +4,7 @@ from __future__ import annotations
 import streamlit as st
 
 import auth
+import composants as C
 import db
 import nav
 import regles as R
@@ -61,40 +62,57 @@ def formulaire(tid: str | None = None) -> None:
             ui.succes("Fiche tiers enregistrée.")
 
 
+ROLE_ETIQUETTES = {"client": ("#e9eeff", "#1a27b5"), "supplier": ("#fff1dc", "#b35c00"),
+                   "subcontractor": ("#efe9ff", "#5f3dc4")}
+
+
+def carte_kanban(r: dict) -> dict:
+    """Carte de contact : avatar, rôles, téléphone, e-mail, adresse."""
+    tags = [(R.PARTY_ROLES.get(x, x), *ROLE_ETIQUETTES.get(x, ("#eef1fd", "#1a27b5"))) for x in r["_roles"]]
+    if r["etat"] == "Archivé":
+        tags.append(("Archivé", "#edf0f7", "#5a6684"))
+    return {"titre": r["nom"], "sous_titre": r["code"], "initiales": C.initiales(r["nom"]),
+            "couleur": "#d6336c" if "client" in r["_roles"] else "#ff9f1c",
+            "lignes": [r["tel"], r["mail"], r["adr"]], "etiquettes": tags}
+
+
 def page() -> None:
     auth.exiger("tiers")
-    ui.en_tete("Clients et fournisseurs", "Clients, fournisseurs et sous-traitants dans un carnet unique.")
     s = R.charger("clients", "projects", "invoices", "expenses")
     ecrit = auth.modifie("tiers")
+    sel = C.fiche_ouverte("tiers")
+    p = next((x for x in s["clients"] if x["id"] == sel), None) if sel else None
+    if p:
+        fiche(s, p, ecrit)
+        return
+    ui.en_tete("Clients et fournisseurs", "Clients, fournisseurs et sous-traitants dans un carnet unique.")
     if ecrit and st.button("Nouveau tiers", type="primary", icon=":material/person_add:"):
         formulaire()
     if ecrit:
         from vues import imports as IMP
         IMP.encart(["tiers"], "Importer des tiers depuis Excel")
-    a, b, c = st.columns([2, 1, 1])
-    q = a.text_input("Rechercher un tiers", placeholder="Nom, code, téléphone…", key="t_q")
-    role = b.selectbox("Rôle", [""] + list(R.PARTY_ROLES), format_func=lambda r: R.PARTY_ROLES.get(r, "Tous les rôles"))
-    archives = c.toggle("Inclure les tiers archivés", key="t_arch")
-    ql = q.strip().lower()
-    liste = [p for p in s["clients"] if (archives or not p.get("archived")) and (not role or role in R.party_roles(p))
-             and any(ql in str(p.get(f) or "").lower() for f in ("name", "code", "phone", "email", "registration"))]
-    liste.sort(key=lambda p: p["name"].lower())
-    if not liste:
-        st.info("Aucun tiers ne correspond à ces critères." if s["clients"] else
-                "Enregistrez un client pour établir un devis ou une facture, ou un fournisseur pour vos dépenses.")
+    if not s["clients"]:
+        st.info("Enregistrez un client pour établir un devis ou une facture, ou un fournisseur pour vos dépenses.")
         return
-    rows = [{"_id": p["id"], "nom": p["name"], "code": p.get("code", ""), "roles": roles_txt(p), "tel": p["phone"],
-             "mail": p["email"], "adr": p["address"], "etat": "Archivé" if p.get("archived") else "Actif"} for p in liste]
-    i = ui.tableau(rows, {"nom": "Tiers", "code": "Code", "roles": "Rôles", "tel": "Téléphone", "mail": "E-mail",
-                          "adr": "Adresse", "etat": "État"}, key="tab_tiers", selection=True)
-    st.caption("Une seule fiche peut cumuler plusieurs rôles. Sélectionnez un tiers pour le consulter.")
-    if i is None:
-        return
-    p = next(x for x in s["clients"] if x["id"] == rows[i]["_id"])
-    st.subheader(p["name"])
-    ui.pieces_jointes("tiers", p["id"], peut_ajouter=ecrit)
-    cols = ui.rangee(4)
-    if ecrit and cols[0].button("Modifier", icon=":material/edit:"):
+    liste = sorted(s["clients"], key=lambda p: p["name"].lower())
+    rows = [{"_id": p["id"], "nom": p["name"], "code": p.get("code", ""), "roles": roles_txt(p), "tel": p["phone"] or "",
+             "mail": p["email"] or "", "adr": p["address"] or "", "etat": "Archivé" if p.get("archived") else "Actif",
+             "rccm": p.get("registration") or "", "_roles": R.party_roles(p),
+             "role1": R.PARTY_ROLES.get((R.party_roles(p) or [""])[0], "")} for p in liste]
+    filtres = [(R.PARTY_ROLES[k], "Rôle", (lambda k: lambda r: k in r["_roles"])(k)) for k in R.PARTY_ROLES]
+    filtres += [("Actifs", "État", lambda r: r["etat"] == "Actif"), ("Archivés", "État", lambda r: r["etat"] == "Archivé")]
+    C.vue_liste("tiers", rows, {"nom": "Tiers", "code": "Code", "roles": "Rôles", "tel": "Téléphone", "mail": "E-mail",
+                                "adr": "Adresse", "etat": "État"},
+                recherche=("nom", "code", "tel", "mail", "rccm", "adr"), filtres=filtres,
+                regroupements={"Rôle principal": ("role1", list(R.PARTY_ROLES.values())), "État": ("etat", ["Actif", "Archivé"])},
+                carte=carte_kanban, vue_defaut="Kanban", nom="tiers", nom_pluriel="tiers")
+
+
+def fiche(s: dict, p: dict, ecrit: bool) -> None:
+    """Fiche tiers : coordonnées, chiffres clés, documents et fil d'activité."""
+    C.fil_ariane("Clients et fournisseurs", p["name"], "tiers")
+    cols = ui.rangee(3)
+    if ecrit and cols[0].button("Modifier", icon=":material/edit:", type="primary"):
         formulaire(p["id"])
     if ecrit and cols[1].button("Réactiver" if p.get("archived") else "Archiver", icon=":material/archive:"):
         with db.transaction(("Réactivation" if p.get("archived") else "Archivage") + f" du tiers {p['name']}") as t:
@@ -107,12 +125,27 @@ def page() -> None:
     depenses = [e for e in s["expenses"] if e["supplier_id"] == p["id"]]
     projets = [r["name"] for r in s["projects"] if r["client"] == p["id"]
                or any(f["project"] == r["id"] for f in factures) or any(e["project"] == r["id"] for e in depenses)]
-    st.markdown(f"{p.get('code', '')} · {roles_txt(p)}  \n{p['phone'] or ''} {p['email'] or ''}  \n{p['address'] or ''}"
-                f"  \n{p.get('registration') or ''}")
-    if auth.voit("commercial"):
-        st.markdown("**Créances sur factures :** " + ui.montants_texte(
-            R.totals_by_currency(factures, lambda x: R.total(x) - x["paid"]), True, consolide_aussi=True))
-    st.markdown("**Chantiers liés :** " + (", ".join(projets) if projets else "aucun"))
-    if auth.voit("depenses"):
-        st.markdown(f"**Dépenses rattachées :** {len(depenses)} · "
-                    + ui.montants_texte(R.totals_by_currency(depenses, lambda e: e["amount"]), True, consolide_aussi=True))
+    gauche, droite = st.columns([1.75, 1], gap="medium")
+    with gauche:
+        with st.container(key="bg_feuille"):
+            tags = "".join(f'<span class="bg-tag">{ui._esc(R.PARTY_ROLES.get(x, x))}</span>' for x in R.party_roles(p))
+            st.html(f'<div style="display:flex;gap:14px;align-items:center"><span class="bg-avatar" style="width:56px;'
+                    f'height:56px;font-size:1.2rem;border-radius:14px;background:{C.couleur_nom(p["name"])}">'
+                    f'{ui._esc(C.initiales(p["name"]))}</span><div><div style="font-size:1.4rem;font-weight:800;'
+                    f'color:var(--bg-navy)">{ui._esc(p["name"])}</div><div>{tags}'
+                    + ('<span class="bg-tag alerte">Archivé</span>' if p.get("archived") else "") + "</div></div></div>")
+            a, b = st.columns(2)
+            a.markdown(f"**Code :** {p.get('code') or '—'}  \n**Téléphone :** {p['phone'] or '—'}  \n"
+                       f"**E-mail :** {p['email'] or '—'}")
+            b.markdown(f"**Adresse :** {p['address'] or '—'}  \n**RCCM / identifiant fiscal :** {p.get('registration') or '—'}")
+            if auth.voit("commercial"):
+                st.markdown("**Créances sur factures :** " + ui.montants_texte(
+                    R.totals_by_currency(factures, lambda x: R.total(x) - x["paid"]), True, consolide_aussi=True))
+            st.markdown("**Chantiers liés :** " + (", ".join(projets) if projets else "aucun"))
+            if auth.voit("depenses"):
+                st.markdown(f"**Dépenses rattachées :** {len(depenses)} · "
+                            + ui.montants_texte(R.totals_by_currency(depenses, lambda e: e["amount"]), True,
+                                                consolide_aussi=True))
+            ui.pieces_jointes("tiers", p["id"], peut_ajouter=ecrit)
+    with droite:
+        C.fil_activite("clients", p["id"], peut_noter=auth.voit("tiers"))
