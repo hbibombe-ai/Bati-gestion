@@ -124,6 +124,8 @@ def formulaire(pid: str | None = None) -> None:
                        help="Dans Google Maps, faites un appui long sur le chantier : les deux nombres affichés "
                             "(latitude, longitude) se copient ici. Ils placent le chantier sur la carte.")
     with b:
+        debut = ui.date_txt("Date de début", f"ch_debut_{pid}", p.get("debut") or "", vide_ok=True,
+                            aide="Sert au planning (diagramme de Gantt).")
         echeance = ui.date_txt("Date de livraison prévue", f"ch_deadline_{pid}", p.get("deadline"), vide_ok=True)
     monnaie = ui.devise("Monnaie", f"ch_cur_{pid}", p.get("currency"))
     taux = None
@@ -140,7 +142,10 @@ def formulaire(pid: str | None = None) -> None:
             if not nom.strip():
                 raise ValueError("Le nom est obligatoire.")
             latitude, longitude = lire_gps(gps)
+            if debut and echeance and debut > echeance:
+                raise ValueError("La date de début doit précéder la date de livraison.")
             rec = {"name": nom.strip(), "client": cli or "", "location": lieu.strip(), "deadline": echeance,
+                   "debut": debut or None,
                    "latitude": latitude, "longitude": longitude,
                    "status": statut, "progress": float(avancement), "currency": monnaie,
                    "budget": R.cents(budget, "Budget")}
@@ -235,7 +240,7 @@ def fiche(s: dict, p: dict, ecrit: bool) -> None:
             st.progress(min(100, int(float(p["progress"]))) / 100, text=f"Avancement : {float(p['progress']):.0f} %")
             a, b, c = st.columns(3)
             a.markdown(f"**Client :** {R.client_name(s, p['client']) or '—'}  \n**Lieu :** {p['location'] or '—'}  \n"
-                       f"**Échéance :** {p['deadline'] or 'Non précisée'}  \n**GPS :** {texte_gps(p) or 'non renseigné'}")
+                       f"**Début :** {p.get('debut') or 'Non précisé'}  \n**Échéance :** {p['deadline'] or 'Non précisée'}  \n**GPS :** {texte_gps(p) or 'non renseigné'}")
             managed = next((x for x in V.records("budget") if x["project"] == p["id"]), None)
             b.markdown(f"**Budget historique :** {R.money(p['budget'], p['currency'])}  \n**Décaissements :** "
                        f"{ui.montants_texte(decaissements(s, p['id']), True, consolide_aussi=True)}")
@@ -266,4 +271,4 @@ def fiche(s: dict, p: dict, ecrit: bool) -> None:
             with tabs["Documents"]:
                 ui.pieces_jointes("chantiers", p["id"], peut_ajouter=ecrit)
     with droite:
-        C.fil_activite("projects", p["id"], peut_noter=auth.voit("chantiers"))
+        C.fil_activite("projects", p["id"], peut_noter=auth.voit("chantiers"), libelle=p["name"])

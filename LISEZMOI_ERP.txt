@@ -1,0 +1,27 @@
+BatiGestion — CRM, planning Gantt, activités, tableau de bord personnalisable (7 novembre 2026)
+=============================================================================================
+
+20 fichiers à déposer dans le dépôt GitHub « Bati-gestion » (Add file > Upload files),
+en gardant les dossiers : vues/, migrations/versions/, tests/, .streamlit/ (dossier caché : Cmd + Maj + . dans Finder).
+Les données existantes sont conservées : la base est mise à jour automatiquement au premier affichage
+(migration 0007 : 2 nouvelles tables et la colonne « date de début » des chantiers).
+Conseil : faites d'abord une sauvegarde JSON (Paramètres et sauvegarde).
+
+Nouveautés
+----------
+1. Pipeline CRM (Commercial > Pipeline CRM) : pistes en colonnes Nouveau → Qualifié → Proposition →
+   Négociation → Gagné (+ Perdu avec motif), montant, probabilité, montant pondéré, priorité (étoiles),
+   responsable, date de clôture, bouton « Créer le client ».
+2. Planning (Chantiers > Planning (Gantt)) : barres début → livraison, avancement en couleur pleine,
+   ligne « Aujourd'hui », chantiers en retard signalés, saisie rapide des dates dans un tableau.
+   Le formulaire chantier a un nouveau champ « Date de début ».
+3. Activités planifiées : sur chaque fiche (chantier, client, devis, facture, piste CRM, personnel,
+   dépense, demande d'achat), « Planifier une activité » (appel, réunion, e-mail, visite, relance, à faire),
+   avec échéance et personne assignée ; bouton « Fait » (compte rendu) ou « Reporter ».
+   Page Tableau de bord > Mes activités ; rappel « Activités (n) » en haut et message à la connexion.
+4. Mon tableau de bord (Tableau de bord > Mon tableau de bord) : chaque utilisateur choisit ses
+   indicateurs, graphiques et listes (15 éléments selon ses droits), leur ordre et le nombre de colonnes.
+5. Vues kanban / liste avec recherche, filtres, regroupement et fiche + fil d'activité dans :
+   Personnel et pointage, Dépenses, Achats (onglet Besoins et demandes).
+
+Tests : 224 réussis, 5 ignorés.

@@ -105,6 +105,7 @@ try:
                       presence_kobo, rapports, recherche, reprise_historique, sauvegarde, societe, taux, tiers,
                       utilisateurs)
     from vues import memo_v7
+    from vues import activites, crm, planning, tableau_bord
     from vues import imports as centre_imports
 except ModuleNotFoundError as e:
     st.error(f"Fichier introuvable : {e.name}. Les dossiers « vues » et « imports » doivent être déposés sur GitHub, à "
@@ -136,13 +137,17 @@ def tresor(mode: str):
 
 # (section, titre, url, icône, module(s) requis, fonction)
 PAGES = [
+    ("Accueil", "Mon tableau de bord", "mon-tableau-de-bord", "space_dashboard", ["accueil"], tableau_bord.page),
     ("Accueil", "Vue d’ensemble", "vue-ensemble", "dashboard", ["accueil"], accueil.page),
+    ("Accueil", "Mes activités", "mes-activites", "event_note", ["accueil"], activites.page),
     ("Accueil", "Recherche globale", "recherche", "search", ["recherche"], recherche.page),
     ("Accueil", "Rapports et alertes", "rapports", "notifications", ["rapports"], rapports.page),
+    ("Commercial", "Pipeline CRM", "crm", "trending_up", ["commercial"], crm.page),
     ("Commercial", "Devis", "devis", "request_quote", ["commercial"], doc("quotes")),
     ("Commercial", "Factures", "factures", "receipt_long", ["commercial"], doc("invoices")),
     ("Commercial", "Prospects et contrats", "commercial", "handshake", ["commercial"], espace("commercial")),
     ("Projets & Chantiers", "Chantiers", "chantiers", "construction", ["chantiers"], chantiers.page),
+    ("Projets & Chantiers", "Planning (Gantt)", "planning", "view_timeline", ["chantiers"], planning.page),
     ("Projets & Chantiers", "DQE, situations, qualité", "dossiers-chantier", "fact_check", ["projets"],
      espace("projets")),
     ("Achats & Stocks", "Achats et stock", "achats-stock", "inventory",

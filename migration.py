@@ -30,6 +30,8 @@ OPTIONNELLES = ["pieces_jointes",
                 "ach_commande_lignes", "ach_receptions", "ach_reception_lignes", "ach_factures", "ach_facture_lignes",
                 # Socle comptable V8
                 "cpt_comptes", "cpt_journaux", "cpt_periodes", "regles_comptables", "cpt_pieces", "cpt_lignes",
+                # Extension ERP : pistes commerciales et activités planifiées
+                "crm_pistes", "activites",
                 # Arrêtés de caisse
                 "caisse_arretes"]
 FORMAT = "bati-gestion-python-1"

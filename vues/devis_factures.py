@@ -339,7 +339,7 @@ def _fiche(kind: str, s: dict, d: dict, cle: str) -> None:
                                        for l in d["lines"]]), hide_index=True, width="stretch")
             st.markdown(f"**Total : {R.money(R.total(d), d['currency'])}**")
     with droite:
-        C.fil_activite(kind, d["id"])
+        C.fil_activite(kind, d["id"], libelle=f"{NOMS[kind][2].capitalize()} {d['number']}")
 
 
 def _nom_fichier(texte: str) -> str:

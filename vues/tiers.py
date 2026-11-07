@@ -148,4 +148,4 @@ def fiche(s: dict, p: dict, ecrit: bool) -> None:
                                                 consolide_aussi=True))
             ui.pieces_jointes("tiers", p["id"], peut_ajouter=ecrit)
     with droite:
-        C.fil_activite("clients", p["id"], peut_noter=auth.voit("tiers"))
+        C.fil_activite("clients", p["id"], peut_noter=auth.voit("tiers"), libelle=p["name"])

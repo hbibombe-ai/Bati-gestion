@@ -7,6 +7,7 @@ from __future__ import annotations
 import streamlit as st
 
 import auth
+import composants as C
 import db
 import nav
 import pdf
@@ -230,16 +231,72 @@ def pointage(pid: str) -> None:
             ui.succes("Pointage enregistré.")
 
 
+def _carte(r: dict) -> dict:
+    tags = [("Actif", "#e3f7ef", "#0b7a56") if r["st"] == "Actif" else ("Inactif", "#edf0f7", "#5a6684")]
+    if r["lieu"] == "Chantier":
+        tags.append(("Chantier", "#fff1dc", "#b35c00"))
+    return {"titre": r["nom"], "sous_titre": " · ".join(x for x in (r["fct"], r["mat"]) if x),
+            "initiales": C.initiales(r["nom"]), "couleur": "#7048e8" if r["st"] == "Actif" else "#adb5bd",
+            "lignes": [r["aff"], r["tel"], f"Entrée : {r['deb']}" if r["deb"] else ""], "etiquettes": tags}
+
+
+def fiche(s: dict, p: dict, ecrit: bool, salaires: bool) -> None:
+    """Fiche employé : actions, informations, documents et fil d'activité."""
+    C.fil_ariane("Personnel et pointage", p["name"], "pers")
+    c = ui.rangee(5)
+    if ecrit and c[0].button("Modifier", icon=":material/edit:", type="primary"):
+        formulaire(p["id"])
+    if c[1].button("Affectations", icon=":material/swap_horiz:"):
+        affectations(p["id"])
+    if p["active"] and auth.modifie("pointage") and c[2].button("Pointer", icon=":material/how_to_reg:"):
+        pointage(p["id"])
+    with c[3]:
+        ui.telecharger("Fiche / PDF", pdf.document("Fiche employé", R.company_snapshot(),
+                                                   [("kv", fiche_lignes(p, s, salaires))],
+                                                   auteur=auth.utilisateur()["nom"]),
+                       f"fiche-{p['code']}.pdf", ui.MIME_PDF, key=f"fiche_{p['id']}")
+    if p["active"] and auth.modifie("paie") and "paie" in nav.PAGES and c[4].button("Préparer la paie",
+                                                                                    icon=":material/payments:"):
+        st.session_state["paie_personne"] = p["id"]
+        nav.aller("paie")
+    gauche, droite = st.columns([1.75, 1], gap="medium")
+    with gauche:
+        with st.container(key="bg_feuille"):
+            st.html(f'<div style="display:flex;gap:14px;align-items:center;margin-bottom:8px"><span class="bg-avatar" '
+                    f'style="width:56px;height:56px;font-size:1.2rem;border-radius:14px;background:'
+                    f'{C.couleur_nom(p["name"])}">{ui._esc(C.initiales(p["name"]))}</span><div><div style="font-size:'
+                    f'1.4rem;font-weight:800;color:var(--bg-navy)">{ui._esc(p["name"])}</div><div style="color:'
+                    f'var(--doux)">{ui._esc(p["job"] or "")} · {ui._esc(R.hr_place_label(p, s))}</div></div></div>')
+            ui.tableau([{"k": k_, "v": v_ or "Non renseigné"} for k_, v_ in fiche_lignes(p, s, salaires)],
+                       {"k": "Information", "v": "Valeur"}, key=f"fiche_tab_{p['id']}")
+            pts = sorted([a for a in s["attendance"] if a["person_id"] == p["id"]], key=lambda a: a["date"],
+                         reverse=True)[:15]
+            if pts:
+                st.markdown("**Derniers pointages**")
+                ui.tableau([{"d": a["date"], "l": R.hr_place_label(a, s), "s": a["status"], "h": a["hours"]} for a in pts],
+                           {"d": "Date", "l": "Lieu", "s": "Présence",
+                            "h": st.column_config.NumberColumn("Heures", format="%.2f")}, key=f"pts_{p['id']}")
+            ui.pieces_jointes("personnel", p["id"], peut_ajouter=ecrit)
+    with droite:
+        C.fil_activite("personnel", p["id"], peut_noter=auth.voit("personnel"), libelle=p["name"])
+
+
 def page() -> None:
     if not (auth.voit("personnel") or auth.voit("pointage")):
         auth.exiger("personnel")
-    ui.en_tete("Personnel et pointage", "Personnel, affectation actuelle et présence quotidienne.")
-    from vues import imports as IMP
-    IMP.encart(["personnel", "presences"], "Importer du personnel, des affectations ou des présences depuis Excel")
     s = R.charger("personnel", "projects", "attendance")
     salaires = auth.voit("paie")
     staff = sorted(s["personnel"], key=lambda p: (not p["active"], p["name"].lower()))
     ecrit = auth.modifie("personnel")
+    sel = C.fiche_ouverte("pers")
+    p = next((x for x in staff if x["id"] == sel), None) if sel else None
+    if p:
+        fiche(s, p, ecrit, salaires)
+        return
+    ui.en_tete("Personnel et pointage", "Personnel, affectation actuelle et présence quotidienne.",
+               badge=f"{sum(1 for x in staff if x['active'])} actif(s)")
+    from vues import imports as IMP
+    IMP.encart(["personnel", "presences"], "Importer du personnel, des affectations ou des présences depuis Excel")
     b = ui.rangee(3)
     if ecrit and b[0].button("Ajouter une personne", type="primary", icon=":material/person_add:"):
         formulaire()
@@ -265,39 +322,22 @@ def page() -> None:
     with b[2]:
         ui.telecharger("Exporter les pointages", R.to_csv(pts), f"pointages-{R.today()}.csv", ui.MIME_CSV, key="pt_csv")
 
-    st.subheader(f"Personnel ({sum(1 for p in staff if p['active'])} actif(s))")
     if not staff:
         st.info("Ajoutez votre personnel de bureau et de chantier.")
         return
-    rows = [{"_id": p["id"], "nom": p["name"], "mat": p["code"], "fct": p["job"], "srv": p["service"],
-             "aff": R.hr_place_label(p, s), "deb": p["start"], "st": "Actif" if p["active"] else "Inactif"} for p in staff]
-    i = ui.tableau(rows, {"nom": "Nom", "mat": "Matricule", "fct": "Fonction", "srv": "Service",
-                          "aff": "Affectation actuelle", "deb": "Entrée", "st": "Statut"}, key="tab_pers", selection=True)
-    if i is not None:
-        p = next(x for x in staff if x["id"] == rows[i]["_id"])
-        st.subheader(p["name"])
-        ui.pieces_jointes("personnel", p["id"], peut_ajouter=auth.modifie("personnel"))
-        c = ui.rangee(5)
-        if ecrit and c[0].button("Modifier", icon=":material/edit:"):
-            formulaire(p["id"])
-        if c[1].button("Affectations", icon=":material/swap_horiz:"):
-            affectations(p["id"])
-        if p["active"] and auth.modifie("pointage") and c[2].button("Pointer", icon=":material/how_to_reg:", type="primary"):
-            pointage(p["id"])
-        with c[3]:
-            ui.telecharger("Fiche / PDF", pdf.document("Fiche employé", R.company_snapshot(),
-                                                       [("kv", fiche_lignes(p, s, salaires))],
-                                                       auteur=auth.utilisateur()["nom"]),
-                           f"fiche-{p['code']}.pdf", ui.MIME_PDF, key=f"fiche_{p['id']}")
-        if p["active"] and auth.modifie("paie") and "paie" in nav.PAGES and c[4].button("Préparer la paie",
-                                                                                        icon=":material/payments:"):
-            st.session_state["paie_personne"] = p["id"]
-            nav.aller("paie")
-        with st.expander("Fiche employé", expanded=False):
-            ui.tableau([{"k": k_, "v": v_ or "Non renseigné"} for k_, v_ in fiche_lignes(p, s, salaires)],
-                       {"k": "Information", "v": "Valeur"}, key=f"fiche_tab_{p['id']}")
-    else:
-        st.caption("Sélectionnez une personne pour la pointer, voir sa fiche ou ses affectations.")
+    rows = [{"_id": p["id"], "nom": p["name"], "mat": p["code"], "fct": p["job"] or "", "srv": p["service"] or "",
+             "aff": R.hr_place_label(p, s), "lieu": p["location"] or "", "deb": p["start"], "tel": p["phone"] or "",
+             "st": "Actif" if p["active"] else "Inactif"} for p in staff]
+    C.vue_liste("pers", rows, {"nom": "Nom", "mat": "Matricule", "fct": "Fonction", "srv": "Service",
+                               "aff": "Affectation actuelle", "deb": "Entrée", "st": "Statut"},
+                recherche=("nom", "mat", "fct", "srv", "aff", "tel"),
+                filtres=[("Actifs", "Statut", lambda r: r["st"] == "Actif"),
+                         ("Inactifs", "Statut", lambda r: r["st"] == "Inactif"),
+                         ("Bureau", "Lieu", lambda r: r["lieu"] != "Chantier"),
+                         ("Chantier", "Lieu", lambda r: r["lieu"] == "Chantier")],
+                regroupements={"Affectation": ("aff", None), "Service": ("srv", None), "Fonction": ("fct", None),
+                               "Statut": ("st", ["Actif", "Inactif"])},
+                carte=_carte, vue_defaut="Kanban", nom="personne", nom_pluriel="personnes")
 
     st.subheader("Derniers pointages")
     nav.lien("presence-kobo", "Pointage par téléphone avec KoboCollect : présence du jour et import des fiches",

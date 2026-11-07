@@ -11,6 +11,7 @@ import streamlit as st
 
 import achats as A
 import auth
+import composants as C
 import db
 import derogations as DR
 import gestion_v7 as V
@@ -96,17 +97,36 @@ def _besoins(s: dict) -> None:
     if not rows:
         st.info("Aucune demande d’achat.")
         return
-    tab = [{"_id": d["id"], "num": d["numero"], "ch": R.project_name(s, d["projet"]), "date": d["date_souhaitee"],
-            "st": A.statut_demande(d), "niv": f"{d['niveau']}/{len(V.policy()['levels'])}" if d["statut"] == "Soumise" else "",
-            "est": R.money(A.montant_estime(None, d["id"]), d["devise"]), "orig": d["origine"]}
-           for d in sorted(rows, key=lambda x: x["numero"], reverse=True)]
-    i = ui.tableau(tab, {"num": "Numéro", "ch": "Chantier", "date": "Date souhaitée", "st": "Statut", "niv": "Validations",
-                         "est": "Estimation", "orig": "Origine"}, key="tab_da", selection=True)
-    if i is None:
+    sel = C.fiche_ouverte("da")
+    d = next((x for x in rows if x["id"] == sel), None) if sel else None
+    if d is None:
+        tab = [{"_id": d["id"], "num": d["numero"], "ch": R.project_name(s, d["projet"]), "date": d["date_souhaitee"],
+                "st": A.statut_demande(d), "niv": f"{d['niveau']}/{len(V.policy()['levels'])}" if d["statut"] == "Soumise"
+                else "", "est": R.money(A.montant_estime(None, d["id"]), d["devise"]), "orig": d["origine"],
+                "_moi": d["demandeur"] == u["id"]}
+               for d in sorted(rows, key=lambda x: x["numero"], reverse=True)]
+        teintes = {"Brouillon": "#adb5bd", "Soumise": "#3d5afe", "Approuvée": "#12b886", "Annulée": "#868e96",
+                   "Reçue": "#0b7a56", "Commandée": "#7048e8"}
+
+        def carte(r):
+            return {"titre": r["num"], "sous_titre": r["ch"], "couleur": teintes.get(r["st"], "#ff9f1c"),
+                    "lignes": [f"Estimation : {r['est']}", f"Pour le {r['date']}" if r["date"] else "",
+                               f"Validations : {r['niv']}" if r["niv"] else "", f"Origine : {r['orig']}"],
+                    "etiquettes": [(r["st"], "#eef1fd", "#1a27b5")]}
+        statuts = list(dict.fromkeys(list(A.ETAPES) + ["Annulée"] + [r["st"] for r in tab]))
+        C.vue_liste("da", tab, {"num": "Numéro", "ch": "Chantier", "date": "Date souhaitée", "st": "Statut",
+                                "niv": "Validations", "est": "Estimation", "orig": "Origine"},
+                    recherche=("num", "ch", "st", "orig"),
+                    filtres=[("Mes demandes", "Qui", lambda r: r["_moi"]),
+                             ("Brouillons", "Statut", lambda r: r["st"] == "Brouillon"),
+                             ("En validation", "Statut", lambda r: r["st"] == "Soumise"),
+                             ("Approuvées", "Statut", lambda r: r["st"] not in ("Brouillon", "Soumise", "Annulée"))],
+                    regroupements={"Statut": ("st", statuts), "Chantier": ("ch", None)}, regroupement_defaut="Statut",
+                    carte=carte, vue_defaut="Kanban", nom="demande")
         return
-    d = next(x for x in rows if x["id"] == tab[i]["_id"])
-    with st.container(border=True):
-        st.subheader(d["numero"])
+    C.fil_ariane("Demandes d’achat", f"{d['numero']} · {R.project_name(s, d['projet'])}", "da")
+    gauche, droite = st.columns([1.75, 1], gap="medium")
+    with gauche, st.container(border=True):
         st.dataframe([{"N°": l["numero"], "Article": _lib_article(s, l["article"]), "Poste": l["poste"],
                        "Quantité": _q(l["quantite"]), "Prix estimé": R.money(l["prix_estime"], d["devise"]),
                        "Statut": A.statut_ligne(d, l), "Clôture": l["motif_cloture"] or ""}
@@ -137,6 +157,8 @@ def _besoins(s: dict) -> None:
         with st.expander("Historique"):
             st.dataframe([{"Date": h["at"][:16].replace("T", " "), "Par": h["name"], "Action": h["action"],
                            "Note": h.get("note", "")} for h in d["historique"]], hide_index=True, width="stretch")
+    with droite:
+        C.fil_activite("ach_demandes", d["id"], peut_noter=auth.modifie("demandes_achat"), libelle=d["numero"])
 
 
 def _validations(s: dict) -> None:

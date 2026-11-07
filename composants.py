@@ -22,9 +22,9 @@ import ui
 # ------------------------------------------------------------------ applications (une par section du menu)
 # section : (nom affiché, icône Material, couleur 1, couleur 2, description courte)
 APPS: dict[str, tuple[str, str, str, str, str]] = {
-    "Accueil": ("Tableau de bord", "dashboard", "#1a27b5", "#3d5afe", "Vue d’ensemble, recherche, alertes"),
-    "Commercial": ("Commercial", "request_quote", "#ff8a00", "#ffb84d", "Devis, factures, prospects"),
-    "Projets & Chantiers": ("Chantiers", "construction", "#f76707", "#ffa94d", "Chantiers, DQE, situations"),
+    "Accueil": ("Tableau de bord", "dashboard", "#1a27b5", "#3d5afe", "Mon tableau, activités, alertes"),
+    "Commercial": ("Commercial", "request_quote", "#ff8a00", "#ffb84d", "CRM, devis, factures"),
+    "Projets & Chantiers": ("Chantiers", "construction", "#f76707", "#ffa94d", "Chantiers, planning, DQE"),
     "Achats & Stocks": ("Achats & Stocks", "inventory", "#0ca678", "#38d9a9", "Demandes, commandes, magasin"),
     "RH & Paie": ("RH & Paie", "badge", "#7048e8", "#9775fa", "Personnel, pointage, paie"),
     "Finance": ("Finance", "account_balance", "#0b7285", "#22b8cf", "Dépenses, caisse, trésorerie"),
@@ -118,6 +118,14 @@ STYLE_ERP = """
 .bg-kc .tg{margin-top:6px;display:flex;flex-wrap:wrap;gap:4px}
 .bg-kc .tg span{border-radius:999px;padding:1px 9px;font-size:.75rem;font-weight:700;background:#eef1fd;color:var(--bleu)}
 [class*="st-key-bg_k_"] [data-testid^="stBaseButton"]{min-height:1.8rem;padding:0 6px}
+.bg-total{font-size:.8rem;color:var(--doux);margin:-4px 0 8px 4px;font-weight:600}
+.bg-act{display:flex;gap:8px;align-items:flex-start;padding:7px 0;border-bottom:1px dashed #e3e7f2}
+.bg-act:last-child{border-bottom:0}
+.bg-act .ic{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;font-size:.8rem;font-weight:800;flex:0 0 auto}
+.bg-act .ic.retard{background:#fdeeec;color:#a62d25}.bg-act .ic.auj{background:#fff1dc;color:#b35c00}.bg-act .ic.avenir{background:#e3f7ef;color:#0b7a56}
+.bg-act b{color:var(--bg-navy);font-size:.9rem}.bg-act small{display:block;color:var(--doux);font-size:.8rem}
+.st-key-bg_rappel [data-testid="stPageLink"] a{background:#fff1dc;border-color:#ffd8a8 !important}
+.st-key-bg_rappel [data-testid="stPageLink"] a *{color:#b35c00 !important;font-weight:700}
 .bg-groupe{display:flex;align-items:center;gap:.6rem;margin:.8rem 0 .3rem 0;font-weight:800;color:var(--bg-navy)}
 .bg-groupe span{background:#e9eeff;color:var(--bleu);border-radius:999px;padding:1px 10px;font-size:.8rem}
 
@@ -212,6 +220,7 @@ def barre_module(page_active, page_apps, sections: dict[str, list], utilisateur:
                         st.page_link(p, label=p.title, icon=p.icon or None)
         with st.container(horizontal=True, gap="small", vertical_alignment="center", width="content"):
             nav.lien("recherche", "Rechercher", ":material/search:")
+            _rappels(utilisateur)
             with st.container(key="bg_alerte", width="content"):
                 nav.lien("rapports", "Alertes", ":material/campaign:")
             with st.container(key="bg_moi", width="content"):
@@ -223,6 +232,26 @@ def barre_module(page_active, page_apps, sections: dict[str, list], utilisateur:
                     if st.button("Se déconnecter", icon=":material/logout:", key="bg_deconnexion"):
                         auth.deconnecter()
                         st.rerun()
+
+
+def _rappels(utilisateur: dict) -> None:
+    """Bouton « Activités » avec le nombre d'activités en retard ou du jour ; rappel une fois par session."""
+    import erp
+    import nav
+    if "mes-activites" not in nav.PAGES:
+        return
+    n = erp.rappels(utilisateur["id"])
+    total = n["En retard"] + n["Aujourd’hui"]
+    if total:
+        with st.container(key="bg_rappel", width="content"):
+            nav.lien("mes-activites", f"Activités ({total})", ":material/alarm:")
+        if not st.session_state.get("bg_rappel_vu"):
+            st.session_state["bg_rappel_vu"] = True
+            morceaux = [f"{n['En retard']} en retard" if n["En retard"] else "",
+                        f"{n['Aujourd’hui']} pour aujourd’hui" if n["Aujourd’hui"] else ""]
+            st.toast("Rappel : " + " et ".join(m for m in morceaux if m) + ".", icon=":material/alarm:")
+    else:
+        nav.lien("mes-activites", "Activités", ":material/event_note:")
 
 
 # ------------------------------------------------------------------ fiche ouverte (état de navigation)
@@ -324,7 +353,8 @@ def vue_liste(cle: str, lignes: list[dict], colonnes: dict, *, recherche: Iterab
               filtres: list[Filtre] | None = None, regroupements: dict[str, tuple[str, list[str] | None]] | None = None,
               carte: Callable[[dict], dict] | None = None, vues_sup: dict[str, Callable[[list[dict]], None]] | None = None,
               vue_defaut: str = "Kanban", regroupement_defaut: str | None = None, nom: str = "enregistrement",
-              nom_pluriel: str | None = None, couleurs_groupes: dict[str, str] | None = None) -> None:
+              nom_pluriel: str | None = None, couleurs_groupes: dict[str, str] | None = None,
+              total_groupe: Callable[[list[dict]], str] | None = None) -> None:
     """Vue d'ensemble d'une liste : recherche, filtres, « Regrouper par », bascule Kanban / Liste (/ Carte…).
 
     `lignes` : dictionnaires avec une clé « _id ». « Ouvrir » (kanban) ou un clic sur une ligne (liste) ouvre la fiche
@@ -370,7 +400,9 @@ def vue_liste(cle: str, lignes: list[dict], colonnes: dict, *, recherche: Iterab
                 for col, (titre, rs) in zip(cols, groupes[debut:debut + par_rangee]):
                     with col:
                         teinte = (couleurs_groupes or {}).get(titre, "#c8d0e4")
-                        st.html(f'<div class="bg-colonne" style="--k:{teinte}">{ui._esc(titre)}<span>{len(rs)}</span></div>')
+                        tot = total_groupe(rs) if total_groupe else ""
+                        st.html(f'<div class="bg-colonne" style="--k:{teinte}">{ui._esc(titre)}<span>{len(rs)}</span></div>'
+                                + (f'<div class="bg-total">{ui._esc(tot)}</div>' if tot else ""))
                         for r in rs[:limite]:
                             _carte_kanban(cle, r, carte, n)
                             n += 1
@@ -389,7 +421,9 @@ def vue_liste(cle: str, lignes: list[dict], colonnes: dict, *, recherche: Iterab
 
     for k, (titre, rs) in enumerate(groupes):
         if champ:
-            st.html(f'<div class="bg-groupe">{ui._esc(titre)} <span>{len(rs)}</span></div>')
+            tot = total_groupe(rs) if total_groupe else ""
+            st.html(f'<div class="bg-groupe">{ui._esc(titre)} <span>{len(rs)}</span>'
+                    + (f'<small class="bg-total">{ui._esc(tot)}</small>' if tot else "") + "</div>")
         i = ui.tableau(rs, colonnes, key=f"bg_tab_{cle}_{gen}_{k}", selection=True)
         if i is not None:
             ouvrir(cle, rs[i]["_id"])
@@ -451,9 +485,67 @@ def historique(objet: str, objet_id, limite: int = 40) -> list[dict]:
                       o=objet, i=str(objet_id))
 
 
-def fil_activite(objet: str, objet_id, peut_noter: bool = True, titre: str = "Fil d’activité") -> None:
-    """Historique de la fiche (créations, modifications, notes) et saisie d'une note interne."""
+ICONES_ACTIVITE = {"Appel": "☎", "Réunion": "👥", "E-mail": "@", "Visite de chantier": "⌂", "Relance": "↻", "À faire": "✓"}
+
+
+def _jour(texte: str) -> str:
+    try:
+        return dt.date.fromisoformat(str(texte)[:10]).strftime("%d/%m/%Y")
+    except ValueError:
+        return str(texte)
+
+
+def activites_planifiees(objet: str, objet_id, libelle: str, peut: bool) -> None:
+    """Activités à faire sur la fiche (appel, réunion, relance…) : planifier, marquer fait, reporter."""
+    import auth
+    import erp
+    ouvertes = erp.activites_de(objet, str(objet_id))
+    users = erp.utilisateurs_actifs()
+    st.html(f'<div class="bg-chat-t">Activités planifiées{f" ({len(ouvertes)})" if ouvertes else ""}</div>')
+    for a in ouvertes:
+        etat = erp.echeance_etat(a["echeance"])
+        cls = {"En retard": "retard", "Aujourd’hui": "auj"}.get(etat, "avenir")
+        c1, c2 = st.columns([5, 2], vertical_alignment="center")
+        c1.html(f'<div class="bg-act"><span class="ic {cls}">{ICONES_ACTIVITE.get(a["type"], "•")}</span><div>'
+                f'<b>{ui._esc(a["type"])} · {ui._esc(a["resume"])}</b><small>{etat} · échéance {_jour(a["echeance"])}'
+                f'{" · " + ui._esc(users.get(a["assigne_a"], "")) if a["assigne_a"] else ""}</small></div></div>')
+        if peut:
+            with c2.popover("Fait", icon=":material/check:", width="stretch"):
+                cr = st.text_area("Compte rendu (facultatif)", key=f"bg_cr_{a['id']}", height=70)
+                if st.button("Marquer comme fait", key=f"bg_fait_{a['id']}", type="primary"):
+                    erp.terminer(a["id"], cr)
+                    st.rerun()
+                d = st.date_input("Reporter au", value=None, key=f"bg_rep_{a['id']}", format="DD/MM/YYYY")
+                if d and st.button("Reporter", key=f"bg_repb_{a['id']}"):
+                    erp.reporter(a["id"], d.isoformat())
+                    st.rerun()
+    if not ouvertes:
+        st.caption("Aucune activité prévue.")
+    if peut:
+        with st.expander("Planifier une activité", icon=":material/add_alarm:"):
+            with st.form(f"bg_act_{objet}_{objet_id}", clear_on_submit=True, border=False):
+                a, b = st.columns(2)
+                type_ = a.selectbox("Type", erp.TYPES_ACTIVITE)
+                quand = b.date_input("Échéance", value=dt.date.today() + dt.timedelta(days=1), format="DD/MM/YYYY")
+                resume = st.text_input("À faire", placeholder="Ex. Appeler le client pour valider le devis",
+                                       max_chars=500)
+                moi = auth.utilisateur()["id"]
+                ids = list(users)
+                qui = st.selectbox("Assignée à", ids, index=ids.index(moi) if moi in ids else 0, format_func=users.get)
+                if st.form_submit_button("Planifier", icon=":material/alarm_add:", type="primary"):
+                    try:
+                        erp.planifier(objet, str(objet_id), libelle, type_, resume, quand.isoformat(), qui, moi)
+                    except ValueError as e:
+                        st.error(str(e))
+                    else:
+                        st.rerun()
+
+
+def fil_activite(objet: str, objet_id, peut_noter: bool = True, titre: str = "Fil d’activité", libelle: str = "") -> None:
+    """Activités planifiées, historique de la fiche (créations, modifications, notes) et note interne."""
     with st.container(key="bg_chatter"):
+        activites_planifiees(objet, objet_id, libelle, peut_noter)
+        st.divider()
         st.html(f'<div class="bg-chat-t">{ui._esc(titre)}</div>')
         if peut_noter:
             with st.form(f"bg_note_{objet}_{objet_id}", clear_on_submit=True, border=False):
@@ -472,7 +564,8 @@ def fil_activite(objet: str, objet_id, peut_noter: bool = True, titre: str = "Fi
         items = []
         for r in lignes:
             action = r["action"] or ""
-            cls = "note" if action == "Note" else "cre" if action == "Création" else "sup" if action == "Suppression" else ""
+            cls = ("note" if action in ("Note", "Activité") else "cre" if action == "Création"
+                   else "sup" if action == "Suppression" else "")
             quand = r["quand"]
             if isinstance(quand, str):
                 try:

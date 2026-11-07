@@ -126,7 +126,7 @@ class Ecrans(unittest.TestCase):
         import db
         at = self.ouvrir("vues.chantiers", "admin", fiche="ch:p1")
         self.assertTrue(any("Fil d’activité" in h.proto.body for h in at.get("html")))
-        at.text_area[0].input("Livraison du ciment prévue lundi")
+        next(t for t in at.text_area if t.label == "Note interne").input("Livraison du ciment prévue lundi")
         at.button[[b.label for b in at.button].index("Enregistrer la note")].click().run()
         self.assertFalse(at.exception)
         notes = db.requete("select * from audit where action = 'Note' and objet = 'projects' and objet_id = 'p1'")

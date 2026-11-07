@@ -4,6 +4,7 @@ from __future__ import annotations
 import streamlit as st
 
 import auth
+import composants as C
 import db
 import gestion_v7 as V
 import nav
@@ -95,9 +96,15 @@ def formulaire(eid: str | None = None) -> None:
 
 def page() -> None:
     auth.exiger("depenses")
-    ui.en_tete("Dépenses", "Matériaux, main-d’œuvre et frais de chantier. Chaque dépense crée une sortie de caisse.")
     s = R.charger("projects", "clients", "expenses", "movements")
     ecrit = auth.modifie("depenses")
+    pieces = pieces_par_depense()
+    sel = C.fiche_ouverte("dep")
+    e = next((x for x in s["expenses"] if x["id"] == sel), None) if sel else None
+    if e:
+        fiche(s, e, ecrit, pieces)
+        return
+    ui.en_tete("Dépenses", "Matériaux, main-d’œuvre et frais de chantier. Chaque dépense crée une sortie de caisse.")
     if ecrit and st.button("Nouvelle dépense", type="primary", icon=":material/add:"):
         if not s["projects"]:
             st.warning("Ajoutez d’abord un chantier.")
@@ -110,7 +117,6 @@ def page() -> None:
         f_du = ui.date_txt("Du", "dp_f_du", vide_ok=True)
     with c:
         f_au = ui.date_txt("Au", "dp_f_au", vide_ok=True)
-    pieces = pieces_par_depense()
     liste = [e for e in s["expenses"] if (not f_proj or e["project"] == f_proj) and (not f_du or e["date"] >= f_du)
              and (not f_au or e["date"] <= f_au)]
     liste.sort(key=lambda e: e["date"], reverse=True)
@@ -126,15 +132,40 @@ def page() -> None:
              "mt": R.money(e["amount"], e["currency"]), "cpt": R.account_name(comptes.get(e["id"])),
              "just": R.money(justifie(pieces.get(e["id"], []), e["amount"]), e["currency"]),
              "np": len(pieces.get(e["id"], []))} for e in liste]
-    i = ui.tableau(rows, {"date": "Date", "lib": "Libellé", "cat": "Catégorie", "ch": "Chantier",
-                          "four": "Fournisseur", "mt": "Montant", "cpt": "Payé depuis", "just": "Justifié",
-                          "np": st.column_config.NumberColumn("Pièces", format="%d")},
-                   key="tab_dep", selection=True)
-    if i is None:
-        st.caption("Sélectionnez une dépense pour la modifier, la supprimer ou joindre ses justificatifs.")
-        return
-    e = next(x for x in s["expenses"] if x["id"] == rows[i]["_id"])
-    st.subheader(e["label"])
+    for r, e in zip(rows, liste):
+        r["mois"] = e["date"][:7]
+        r["_cur"], r["_mt"] = e["currency"], e["amount"]
+        r["_complet"] = justifie(pieces.get(e["id"], []), e["amount"]) >= e["amount"]
+    cats = sorted({r["cat"] for r in rows})
+    filtres = [(c, "Catégorie", (lambda c: lambda r: r["cat"] == c)(c)) for c in cats]
+    filtres += [("Sans justificatif", "Pièces", lambda r: r["np"] == 0),
+                ("Justification incomplète", "Pièces", lambda r: not r["_complet"])]
+
+    def total(rs):
+        t: dict[str, int] = {}
+        for r in rs:
+            t[r["_cur"]] = t.get(r["_cur"], 0) + r["_mt"]
+        return " · ".join(R.money(v, k) for k, v in t.items())
+
+    def carte(r):
+        tags = [(r["cat"], "#eef1fd", "#1a27b5")]
+        tags.append(("Justifiée", "#e3f7ef", "#0b7a56") if r["_complet"] else
+                    ("À justifier", "#fff1dc", "#b35c00"))
+        return {"titre": r["mt"], "sous_titre": r["lib"], "couleur": "#0b7285" if r["_complet"] else "#ff9f1c",
+                "lignes": [f"{r['date']} · {r['ch']}", f"Fournisseur : {r['four']}", f"Payé depuis : {r['cpt']}"],
+                "etiquettes": tags}
+    C.vue_liste("dep", rows, {"date": "Date", "lib": "Libellé", "cat": "Catégorie", "ch": "Chantier",
+                              "four": "Fournisseur", "mt": "Montant", "cpt": "Payé depuis", "just": "Justifié",
+                              "np": st.column_config.NumberColumn("Pièces", format="%d")},
+                recherche=("lib", "cat", "ch", "four", "date"), filtres=filtres,
+                regroupements={"Chantier": ("ch", None), "Catégorie": ("cat", None), "Fournisseur": ("four", None),
+                               "Mois": ("mois", None)},
+                carte=carte, vue_defaut="Liste", nom="dépense", total_groupe=total)
+
+
+def fiche(s: dict, e: dict, ecrit: bool, pieces: dict) -> None:
+    """Fiche dépense : actions (justificatifs, modifier, supprimer), détail et fil d'activité."""
+    C.fil_ariane("Dépenses", f"{e['label']} · {R.money(e['amount'], e['currency'])}", "dep")
     cols = ui.rangee(3)
     bloque = bool(pieces.get(e["id"]))
     if "justificatifs" in nav.PAGES and cols[0].button("Justificatifs", icon=":material/attach_file:", type="primary"):
@@ -156,7 +187,23 @@ def page() -> None:
                         t.supprimer_ou("movements", db.movements.c.expense_id == e["id"])
                         t.supprimer("expenses", e["id"])
                     st.session_state.pop("dp_suppr", None)
+                    C.fermer("dep")
                     ui.succes("Dépense supprimée.")
                 if n.button("Annuler"):
                     st.session_state.pop("dp_suppr", None)
                     st.rerun()
+    gauche, droite = st.columns([1.75, 1], gap="medium")
+    with gauche:
+        with st.container(key="bg_feuille"):
+            comptes = {m["expense_id"]: m["account"] for m in s["movements"] if m["expense_id"]}
+            st.subheader(e["label"])
+            a, b = st.columns(2)
+            a.markdown(f"**Date :** {e['date']}  \n**Catégorie :** {e['category']}  \n**Chantier :** "
+                       f"{R.project_name(s, e['project'])}")
+            b.markdown(f"**Montant :** {R.money(e['amount'], e['currency'])}  \n**Fournisseur :** "
+                       f"{R.client_name(s, e['supplier_id']) if e['supplier_id'] else '—'}  \n**Payé depuis :** "
+                       f"{R.account_name(comptes.get(e['id']))}  \n**Justifié :** "
+                       f"{R.money(justifie(pieces.get(e['id'], []), e['amount']), e['currency'])} "
+                       f"({len(pieces.get(e['id'], []))} pièce(s))")
+    with droite:
+        C.fil_activite("expenses", e["id"], peut_noter=auth.voit("depenses"), libelle=e["label"])

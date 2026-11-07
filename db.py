@@ -83,6 +83,7 @@ projects = sa.Table(
     sa.Column("progress", sa.Float, nullable=False, default=0),
     sa.Column("latitude", sa.Float, nullable=True),     # coordonnées GPS facultatives (carte des chantiers)
     sa.Column("longitude", sa.Float, nullable=True),
+    sa.Column("debut", Str(10), nullable=True),          # date de début (planning Gantt), facultative
 )
 
 
@@ -325,6 +326,8 @@ from schema_v8 import ajouter as ajouter_v8, ajouter_caisse, ajouter_compta
 ajouter_v8(meta)
 ajouter_compta(meta)
 ajouter_caisse(meta)
+from schema_erp import ajouter_erp
+ajouter_erp(meta)
 
 TABLES = {t.name: t for t in meta.sorted_tables}
 NOMS_OBJETS = {
@@ -345,6 +348,7 @@ NOMS_OBJETS = {
     "ach_factures": "Facture d’achat", "ach_facture_lignes": "Ligne de facture d’achat",
     "cpt_comptes": "Compte", "cpt_journaux": "Journal", "cpt_periodes": "Période comptable", "cpt_pieces": "Pièce comptable",
     "cpt_lignes": "Ligne d’écriture", "regles_comptables": "Règle comptable",
+    "crm_pistes": "Piste commerciale", "activites": "Activité planifiée",
 }
 
 
